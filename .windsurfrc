@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "deploy-server": {
+      "command": "node",
+      "args": [
+        "C:\\Users\\Tulio Scaranto\\Documents\\Dom-da-empada-V2\\mcp-server.cjs"
+      ],
+      "env": {
+        "GITHUB_TOKEN": "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",
+        "PROJECT_DIR": "C:\\Users\\Tulio Scaranto\\Documents\\Dom-da-empada-V2"
+      }
+    }
+  }
+}
