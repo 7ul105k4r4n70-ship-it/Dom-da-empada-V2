@@ -11,10 +11,21 @@ export function Dashboard() {
   const [region, setRegion] = useState<Region | 'Todas'>('Recife');
   const [user, setUser] = useState<any>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [driverNames, setDriverNames] = useState<Record<string, string>>({});
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    supabase.from('app_users').select('id, name').in('role', ['motorista', 'driver']).then(({ data }) => {
+      if (data) {
+        const map: Record<string, string> = {};
+        data.forEach((u: any) => { map[u.id] = u.name; });
+        setDriverNames(map);
+      }
+    });
   }, []);
 
   const getTimeStatus = () => {
@@ -57,12 +68,22 @@ export function Dashboard() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    
+    // Otimização: Carregar apenas pedidos dos últimos 7 dias para o dashboard
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    
     // Usar filtro vazio para 'Todas'
     const regionFilter = region === 'Todas' ? {} : { region };
     
     const unsub = subscribeToTable('orders', regionFilter, (data) => {
       if (!cancelled) {
-        setOrders(data || []);
+        // Filtrar apenas pedidos recentes no cliente também
+        const recentOrders = (data || []).filter(order => {
+          const orderDate = new Date(order.created_at || order.timestamp || Date.now());
+          return orderDate >= sevenDaysAgo;
+        });
+        setOrders(recentOrders);
         setLoading(false);
       }
     }, 'created_at');
@@ -257,12 +278,19 @@ export function Dashboard() {
           <h4 className="text-sm font-bold uppercase tracking-widest text-on-surface-variant px-2">Rota dos Motoristas</h4>
           
           <div className="grid grid-cols-1 gap-4 overflow-y-auto max-h-[800px] pr-2">
-            {/* Agrupar pedidos por motorista e filtrar apenas não concluídos */}
+            {/* Motoristas: todos os pedidos deles. Sem Motorista: apenas pedidos de hoje */}
             {Object.entries(
               orders.reduce<Record<string, Order[]>>((acc, order) => {
-                // Só inclui na lista se NÃO estiver completado
-                if (!['COMPLETED', 'DELIVERED', 'Entregue'].includes(order.status)) {
-                  const driver = order.driverName || (order as any).driver_name || 'Sem Motorista';
+                if (!['COMPLETED', 'DELIVERED', 'Entregue', 'CANCELLED', 'Cancelado'].includes(order.status)) {
+                  const driverId = (order as any).driver_id;
+                  const driver = order.driverName || (order as any).driver_name
+                    || (driverId ? driverNames[driverId] : null)
+                    || 'Sem Motorista';
+                  if (driver === 'Sem Motorista') {
+                    const todayStr = new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Recife' });
+                    const orderStr = new Date((order as any).created_at || order.timestamp).toLocaleDateString('pt-BR', { timeZone: 'America/Recife' });
+                    if (orderStr !== todayStr) return acc;
+                  }
                   if (!acc[driver]) acc[driver] = [];
                   acc[driver].push(order);
                 }
@@ -271,8 +299,16 @@ export function Dashboard() {
             ).length > 0 ? (
               Object.entries(
                 orders.reduce<Record<string, Order[]>>((acc, order) => {
-                  if (!['COMPLETED', 'DELIVERED', 'Entregue'].includes(order.status)) {
-                    const driver = order.driverName || (order as any).driver_name || 'Sem Motorista';
+                  if (!['COMPLETED', 'DELIVERED', 'Entregue', 'CANCELLED', 'Cancelado'].includes(order.status)) {
+                    const driverId = (order as any).driver_id;
+                    const driver = order.driverName || (order as any).driver_name
+                      || (driverId ? driverNames[driverId] : null)
+                      || 'Sem Motorista';
+                    if (driver === 'Sem Motorista') {
+                      const todayStr = new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Recife' });
+                      const orderStr = new Date((order as any).created_at || order.timestamp).toLocaleDateString('pt-BR', { timeZone: 'America/Recife' });
+                      if (orderStr !== todayStr) return acc;
+                    }
                     if (!acc[driver]) acc[driver] = [];
                     acc[driver].push(order);
                   }
@@ -292,20 +328,26 @@ export function Dashboard() {
                   
                   <div className="space-y-3">
                     {driverOrders.map((order) => (
-                      <div key={order.id} className="flex items-center justify-between group pl-2 border-l-2 border-slate-100 hover:border-primary transition-colors">
-                        <div className="flex flex-col">
-                          <span className="text-xs font-bold text-on-surface group-hover:text-primary transition-colors">
-                            {order.pointName}
+                      <div key={order.id} className="flex items-center justify-between group pl-2 border-l-2 border-slate-100 hover:border-primary transition-colors py-0.5">
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-xs font-bold text-on-surface group-hover:text-primary transition-colors leading-tight">
+                            {(order as any).point_name || order.pointName || 'Desconhecido'}
                           </span>
-                          <span className="text-[10px] text-on-surface-variant uppercase">
-                            Lote: {order.short_id || order.id.split('-')[0]}
+                          <span className="text-[9px] text-on-surface-variant font-medium">
+                            {order.vehicle || 'Sem veículo'}
+                            {!['IN PROGRESS','IN_PROGRESS','IN_TRANSIT','ACCEPTED'].includes(order.status) && (
+                              <>
+                                {' · '}
+                                {new Date((order as any).created_at || order.timestamp).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: 'America/Recife' })}
+                              </>
+                            )}
                           </span>
                         </div>
                         <span className={cn(
-                          "text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-tighter",
-                          order.status === 'IN PROGRESS' ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-500"
+                          "text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-tighter shrink-0 ml-2",
+                          ['IN PROGRESS','IN_PROGRESS','IN_TRANSIT','ACCEPTED'].includes(order.status) ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-500"
                         )}>
-                          {order.status === 'IN PROGRESS' ? 'Em Rota' : 'Aguardando'}
+                          {['IN PROGRESS','IN_PROGRESS','IN_TRANSIT','ACCEPTED'].includes(order.status) ? 'Em Rota' : 'Aguardando'}
                         </span>
                       </div>
                     ))}

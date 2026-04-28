@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   X, 
   Package, 
@@ -16,7 +16,10 @@ import {
   ZoomOut,
   Maximize,
   Camera,
-  ImageIcon
+  ImageIcon,
+  RotateCcw,
+  RotateCw,
+  RefreshCcw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/lib/utils';
@@ -37,6 +40,29 @@ export function OrderDetailsModal({ order, onClose }: OrderDetailsModalProps) {
   const [activeTab, setActiveTab] = useState<'pdf' | 'photo'>('pdf');
   const [deliveryPhoto, setDeliveryPhoto] = useState<string | null>(null);
   const [loadingPhoto, setLoadingPhoto] = useState(false);
+  const [photoZoom, setPhotoZoom] = useState(1);
+  const [photoRotation, setPhotoRotation] = useState(0);
+  const photoZoomRef = useRef(1);
+  const photoRotationRef = useRef(0);
+  const photoPositionRef = useRef({ x: 0, y: 0 });
+  const isDraggingRef = useRef(false);
+  const dragStartRef = useRef({ x: 0, y: 0 });
+  const photoImgRef = useRef<HTMLImageElement>(null);
+
+  const applyTransform = (zoom = photoZoomRef.current, rotation = photoRotationRef.current, pos = photoPositionRef.current) => {
+    if (photoImgRef.current) {
+      photoImgRef.current.style.transform = `translate(${pos.x}px,${pos.y}px) scale(${zoom}) rotate(${rotation}deg)`;
+    }
+  };
+
+  const resetPhotoTransform = () => {
+    photoZoomRef.current = 1;
+    photoRotationRef.current = 0;
+    photoPositionRef.current = { x: 0, y: 0 };
+    setPhotoZoom(1);
+    setPhotoRotation(0);
+    applyTransform(1, 0, { x: 0, y: 0 });
+  };
 
   // Helper to format dates safely (handles Firestore Timestamp and ISO strings)
   const formatDate = (timestamp: any): string => {
@@ -596,25 +622,76 @@ export function OrderDetailsModal({ order, onClose }: OrderDetailsModalProps) {
               )}
 
               {activeTab === 'photo' && deliveryPhoto && (
-                <div className="w-full h-[70vh] bg-white rounded-xl shadow-2xl border border-slate-300 overflow-auto relative flex flex-col items-center justify-center p-4">
+                <div className="w-full flex flex-col rounded-xl shadow-2xl border border-slate-300 overflow-hidden" style={{height:'70vh'}}>
                   {loadingPhoto ? (
-                    <div className="flex flex-col items-center justify-center gap-3">
+                    <div className="flex-1 flex flex-col items-center justify-center gap-3 bg-white">
                       <div className="w-8 h-8 border-4 border-primary/30 border-t-primary rounded-full animate-spin" />
                       <p className="text-xs font-bold text-on-surface-variant animate-pulse">Buscando foto da entrega...</p>
                     </div>
                   ) : (
                     <>
-                      <img 
-                        src={deliveryPhoto} 
-                        alt="Foto da Entrega"
-                        className="max-w-full max-h-full object-contain rounded-lg shadow-lg cursor-pointer"
-                        onClick={() => window.open(deliveryPhoto!, '_blank')}
-                        onError={(e) => {
-                          console.error('[OrderDetailsModal] Erro ao carregar imagem:', deliveryPhoto);
-                          (e.target as HTMLImageElement).style.display = 'none';
+                      {/* Image area — drag via listeners nativos no document (zero lag) */}
+                      <div
+                        className="flex-1 bg-slate-100 flex items-center justify-center overflow-hidden select-none"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          if (photoZoomRef.current <= 1) return;
+                          isDraggingRef.current = true;
+                          dragStartRef.current = { x: e.clientX, y: e.clientY };
+                          if (photoImgRef.current) photoImgRef.current.style.cursor = 'grabbing';
+
+                          const onMove = (ev: MouseEvent) => {
+                            if (!isDraggingRef.current) return;
+                            const nx = photoPositionRef.current.x + (ev.clientX - dragStartRef.current.x) / photoZoomRef.current;
+                            const ny = photoPositionRef.current.y + (ev.clientY - dragStartRef.current.y) / photoZoomRef.current;
+                            if (photoImgRef.current) {
+                              photoImgRef.current.style.transform = `translate(${nx}px,${ny}px) scale(${photoZoomRef.current}) rotate(${photoRotationRef.current}deg)`;
+                            }
+                          };
+
+                          const onUp = (ev: MouseEvent) => {
+                            isDraggingRef.current = false;
+                            photoPositionRef.current = {
+                              x: photoPositionRef.current.x + (ev.clientX - dragStartRef.current.x) / photoZoomRef.current,
+                              y: photoPositionRef.current.y + (ev.clientY - dragStartRef.current.y) / photoZoomRef.current,
+                            };
+                            if (photoImgRef.current) photoImgRef.current.style.cursor = 'grab';
+                            document.removeEventListener('mousemove', onMove);
+                            document.removeEventListener('mouseup', onUp);
+                          };
+
+                          document.addEventListener('mousemove', onMove);
+                          document.addEventListener('mouseup', onUp);
                         }}
-                      />
-                      <p className="mt-4 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest bg-white/50 px-4 py-1 rounded-full border border-slate-200">Clique na imagem para ampliar</p>
+                        onWheel={(e) => {
+                          e.preventDefault();
+                          const nz = Math.max(0.5, Math.min(5, photoZoomRef.current * (e.deltaY > 0 ? 0.9 : 1.1)));
+                          photoZoomRef.current = nz;
+                          setPhotoZoom(nz);
+                          applyTransform(nz);
+                        }}
+                      >
+                        <img
+                          ref={photoImgRef}
+                          src={deliveryPhoto}
+                          alt="Foto da Entrega"
+                          className="max-w-full max-h-full object-contain will-change-transform"
+                          style={{ transformOrigin: 'center center', cursor: 'grab' }}
+                          draggable={false}
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                        />
+                      </div>
+                      {/* Toolbar */}
+                      <div className="bg-white border-t border-slate-100 px-3 py-2 flex items-center justify-center gap-1 flex-shrink-0">
+                        <button onClick={() => { const nz = Math.max(0.5, photoZoomRef.current - 0.25); photoZoomRef.current = nz; setPhotoZoom(nz); applyTransform(nz); }} className="p-2 hover:bg-slate-100 rounded-lg text-slate-700" title="Zoom -"><ZoomOut className="w-4 h-4" /></button>
+                        <span className="text-xs text-slate-500 font-medium min-w-[44px] text-center">{Math.round(photoZoom*100)}%</span>
+                        <button onClick={() => { const nz = Math.min(5, photoZoomRef.current + 0.25); photoZoomRef.current = nz; setPhotoZoom(nz); applyTransform(nz); }} className="p-2 hover:bg-slate-100 rounded-lg text-slate-700" title="Zoom +"><ZoomIn className="w-4 h-4" /></button>
+                        <div className="w-px h-5 bg-slate-200 mx-1" />
+                        <button onClick={() => { const nr = photoRotationRef.current - 90; photoRotationRef.current = nr; setPhotoRotation(nr); applyTransform(undefined, nr); }} className="p-2 hover:bg-slate-100 rounded-lg text-slate-700" title="Girar Esquerda"><RotateCcw className="w-4 h-4" /></button>
+                        <button onClick={() => { const nr = photoRotationRef.current + 90; photoRotationRef.current = nr; setPhotoRotation(nr); applyTransform(undefined, nr); }} className="p-2 hover:bg-slate-100 rounded-lg text-slate-700" title="Girar Direita"><RotateCw className="w-4 h-4" /></button>
+                        <div className="w-px h-5 bg-slate-200 mx-1" />
+                        <button onClick={resetPhotoTransform} className="p-2 hover:bg-slate-100 rounded-lg text-slate-700 flex items-center gap-1" title="Redefinir"><RefreshCcw className="w-4 h-4" /><span className="text-xs font-medium">Redefinir</span></button>
+                      </div>
                     </>
                   )}
                 </div>

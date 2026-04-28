@@ -9,7 +9,6 @@ const isLocalDev = !import.meta.env.PROD && (window.location.hostname === 'local
 const finalUrl = isLocalDev
   ? (import.meta.env.VITE_SUPABASE_URL || 'http://72.60.61.216:8000')
   : window.location.origin + '/supabase'; // prod: proxy rewrite Vercel → 72.60.61.216:8000 (Kong)
-console.log('[Supabase] URL:', finalUrl, '| localDev:', isLocalDev, '| PROD:', import.meta.env.PROD);
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNjQxNzY5MjAwLCJleHAiOjE3OTk1MzU2MDB9.mNICLM3eLL20ZItNn-asYmBADDcz2gCCwLBJ3csHTtg';
 
 // Service Role Key — permite criar usuários já confirmados (sem e-mail)
@@ -22,8 +21,12 @@ export const supabase = createClient(finalUrl, supabaseAnonKey, {
     persistSession: true,
     detectSessionInUrl: false,
   },
-  // Realtime ativo — necessário para o V1 atualizar o V2 instantaneamente
-  realtime: { params: { eventsPerSecond: 8 } },
+  realtime: {
+    params: { eventsPerSecond: 4 },
+    // Reconectar devagar para parar o flood de ERR_CONNECTION_TIMED_OUT
+    reconnectAfterMs: (tries: number) => Math.min(tries * 30000, 120000),
+    heartbeatIntervalMs: 60000,
+  },
   global: {
     headers: { 'X-Client-Info': 'domdaempada-admin' },
   },
@@ -182,88 +185,42 @@ export function getCurrentUser() {
 }
 
 // ─── Realtime subscribe helper ──────────────────────────────
-// Em localhost, timeout muito menor para não travar a UI durante desenvolvimento
-const DEFAULT_TIMEOUT = isLocalDev ? 3000 : 15000;
-const DEFAULT_RETRIES = isLocalDev ? 1 : 2;
-
-function fetchWithRetry(
-  table: string,
-  filters: Record<string, string>,
-  orderCol: string,
-  ascending: boolean,
-  retries = DEFAULT_RETRIES,
-  timeoutMs = DEFAULT_TIMEOUT
-): Promise<any[]> {
-  const attempt = (n: number): Promise<any[]> => {
-    let q = supabase.from(table).select('*');
-    for (const [col, val] of Object.entries(filters)) q = q.eq(col, val);
-    const fetchP = q.order(orderCol, { ascending }) as unknown as Promise<{ data: any[] | null; error: any }>;
-    const timeoutP = new Promise<{ data: null; error: string }>(r =>
-      setTimeout(() => r({ data: null, error: `timeout ${timeoutMs}ms` }), timeoutMs)
-    );
-    return Promise.race([fetchP, timeoutP]).then(({ data, error }) => {
-      if (error || !data) {
-        console.warn(`[Supabase] ${table} tentativa ${retries - n + 1}: ${error || 'sem dados'} (${data?.length ?? 0} rows)`);
-        if (n > 0) return new Promise(r => setTimeout(r, 500)).then(() => attempt(n - 1));
-      }
-      if (error) console.error(`[Supabase] Erro final ${table}:`, error);
-      console.log(`[Supabase] ${table}: ${data?.length || 0} registros retornados`);
-      return data || [];
-    });
-  };
-  return attempt(retries);
-}
-
+// Agora usa fetchRows com limite para evitar carregamentos massivos
 export function subscribeToTable(
   table: string,
   filters: Record<string, string>,
   callback: (rows: any[]) => void,
   orderCol = 'created_at',
-  ascending = false
+  ascending = false,
+  limitCount = 500, // Limite padrão para evitar carregamentos massivos
+  dateRange?: { column: string; start?: string; end?: string }
 ) {
-  console.log(`[Supabase] subscribeToTable('${table}') iniciado`, filters);
+  let active = true;
 
-  // Busca inicial
-  console.log(`[Supabase] Fazendo fetch inicial de ${table}...`);
-  const initialFetch = fetchWithRetry(table, filters, orderCol, ascending, isLocalDev ? 1 : 2, isLocalDev ? 3000 : 15000).then(data => {
-    console.log(`[Supabase] ✅ ${table}: ${data.length} registros recebidos`);
-    callback(data);
-    return data;
-  }).catch(error => {
-    console.error(`[Supabase] ❌ ERRO ao buscar ${table}:`, error);
-    callback([]);
-    return [];
-  });
-
-  // Configurar Realtime subscription para atualizações instantâneas
-  let currentRows: any[] = [];
-  initialFetch.then(data => { currentRows = data || []; });
-
-  console.log(`[Supabase] Configurando Realtime para ${table}...`);
-  const channel = supabase
-    .channel(`public:${table}:changes`)
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table },
-      (payload: any) => {
-        console.log(`[Realtime] ${table} event:`, payload.eventType, payload);
-
-        // Recarregar dados após qualquer mudança para manter consistência
-        fetchWithRetry(table, filters, orderCol, ascending, 0, 8000).then(data => {
-          currentRows = data || [];
-          callback(currentRows);
-        });
-      }
-    )
-    .subscribe((status: string) => {
-      console.log(`[Realtime] ${table} subscription status:`, status);
-      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-        console.error(`[Realtime] ❌ ERRO na subscription de ${table}:`, status);
-      }
+  const doFetch = () =>
+    fetchRows(table, filters, orderCol, ascending, limitCount, dateRange).then(data => {
+      if (active) callback(data);
     });
 
+  doFetch();
+
+  // Polling de backup a cada 60s (reduzido para melhorar performance)
+  const interval = setInterval(doFetch, 60000);
+
+  // Realtime para atualizações imediatas quando disponível
+  let debounce: ReturnType<typeof setTimeout> | null = null;
+  const channel = supabase
+    .channel(`rt:${table}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table }, () => {
+      if (debounce) clearTimeout(debounce);
+      debounce = setTimeout(doFetch, 1000); // Aumentado debounce para 1s
+    })
+    .subscribe();
+
   return () => {
-    console.log(`[Realtime] ${table} unsubscribing`);
+    active = false;
+    clearInterval(interval);
+    if (debounce) clearTimeout(debounce);
     supabase.removeChannel(channel);
   };
 }
@@ -290,19 +247,23 @@ export async function fetchRows(
   filters: Record<string, string> = {},
   orderCol = 'created_at',
   ascending = false,
-  limitCount?: number
+  limitCount?: number,
+  dateRange?: { column: string; start?: string; end?: string }
 ) {
   let q = supabase.from(table).select('*');
-  for (const [col, val] of Object.entries(filters)) {
-    q = q.eq(col, val);
+  for (const [col, val] of Object.entries(filters)) q = q.eq(col, val);
+  
+  if (dateRange) {
+    if (dateRange.start) q = q.gte(dateRange.column, dateRange.start);
+    if (dateRange.end) q = q.lte(dateRange.column, dateRange.end);
   }
+  
   q = q.order(orderCol, { ascending });
   if (limitCount) q = q.limit(limitCount);
-  // Timeout de 8s com retry
-  console.log(`[Supabase] fetchRows('${table}') iniciado`, filters);
-  const data = await fetchWithRetry(table, filters, orderCol, ascending);
-  console.log(`[Supabase] fetchRows('${table}'): ${data.length} registros`);
-  return data;
+  
+  const { data, error } = await (q as any);
+  if (error) console.error(`[Supabase] fetchRows ${table}:`, error.message);
+  return data || [];
 }
 
 // ─── Seed initial data ──────────────────────────────────────

@@ -93,37 +93,40 @@ function getUnitsPerBox(category: string, name: string): number {
   const saboresDoces = ['banana', 'chocolate', 'romeu', 'julieta', 'beijinho', 'coco', 'prestígio', 'paçoca', 'morango', 'doce de leite', 'goiabada', 'brigadeiro'];
   if (nm.includes('doce') || saboresDoces.some(sabor => nm.includes(sabor))) return 18;
 
-  const saboresSalgados = ['camarão', 'frango', 'carne', 'queijo', 'palmito', 'bacalhau', 'charque', 'atum', 'presunto', 'calabresa', 'sardinha', 'salgada'];
+  const saboresSalgados = ['camarão', 'frango', 'carne', 'queijo', 'palmito', 'bacalhau', 'charque', 'atum', 'presunto', 'calabresa', 'sardinha', 'salgada', 'alho poró', 'alho'];
   if (nm.includes('salgada') || saboresSalgados.some(sabor => nm.includes(sabor))) return 19;
 
   return 1;
 }
 
-// Inferir categoria correta pelo nome do produto (quando o banco vem com 'Outros' ou vazio)
-function inferCategory(name: string, currentCategory?: string): string {
-  const cat = (currentCategory || '').toLowerCase().trim();
+// Normalizar categoria que vem do banco para nome padronizado
+function normalizeCategory(cat?: string): string {
+  const c = (cat || '').toLowerCase().trim();
+  if (c === 'empada salgada' || c === 'empadas salgadas' || c === 'food_salty') return 'Empada Salgada';
+  if (c === 'empada doce' || c === 'empadas doces' || c === 'food_sweet') return 'Empadas Doces';
+  if (c === 'pastel' || c === 'pastéis' || c === 'pasteis') return 'Pastéis';
+  if (c === 'descartáveis' || c === 'descartaveis' || c === 'descartável' || c === 'descartavel') return 'Descartáveis';
+  if (c === 'fardamento' || c === 'fardamentos') return 'Fardamento';
+  if (c === 'entrega extra' || c === 'entregas extras') return 'Entrega extra';
+  return '';
+}
+
+// Inferir categoria pelo nome (fallback APENAS quando o banco vem vazio/sem categoria)
+function inferCategory(name: string): string {
   const nm = (name || '').toLowerCase().trim();
-
-  // Se já vem com categoria conhecida, manter
-  if (cat === 'empada salgada' || cat === 'empadas salgadas') return 'Empada Salgada';
-  if (cat === 'empada doce' || cat === 'empadas doces') return 'Empadas Doces';
-  if (cat === 'pastel' || cat === 'pastéis' || cat === 'pasteis') return 'Pastéis';
-  if (cat === 'descartáveis' || cat === 'descartaveis') return 'Descartáveis';
-  if (cat === 'fardamento') return 'Fardamento';
-  if (cat === 'entrega extra') return 'Entrega extra';
-
-  // Inferir pelo nome
+  if (!nm) return 'Outros';
   if (nm.includes('pastel')) return 'Pastéis';
-  if (nm.includes('embalag') || nm.includes('caixa') || nm.includes('sacola') || nm.includes('papel') || nm.includes('descart')) return 'Descartáveis';
-  if (nm.includes('farda') || nm.includes('uniforme') || nm.includes('camisa') || nm.includes('boné') || nm.includes('bone')) return 'Fardamento';
+  if (nm.includes('embalag') || nm.includes('caixa') || nm.includes('sacola') || nm.includes('papel') || nm.includes('descart') || nm.includes('forminha') || nm.includes('guardanap')) return 'Descartáveis';
+  if (nm.includes('farda') || nm.includes('uniforme') || nm.includes('camisa') || nm.includes('boné') || nm.includes('bone') || nm.includes('touca') || nm.includes('avental')) return 'Fardamento';
+  if (nm.includes('entrega') || nm.includes('domingo') || nm.includes('feriado') || nm.includes('natal') || nm.includes('arapiraca') || nm.includes('joão pessoa') || nm.includes('caruaru') || nm.includes('campina') || nm.includes('fora de hor') || nm.includes('extra')) return 'Entrega extra';
 
   const saboresDoces = ['banana', 'chocolate', 'romeu', 'julieta', 'beijinho', 'coco', 'prestígio', 'paçoca', 'morango', 'doce de leite', 'goiabada', 'brigadeiro', 'leite condensado'];
   if (nm.includes('doce') || saboresDoces.some(sabor => nm.includes(sabor))) return 'Empadas Doces';
 
-  const saboresSalgados = ['camarão', 'frango', 'carne', 'queijo', 'palmito', 'bacalhau', 'charque', 'atum', 'presunto', 'calabresa', 'sardinha', 'salgada', 'pizza', 'ahi poró', 'nortdestina', '2 queijos', 'queijo coalho'];
+  const saboresSalgados = ['camarão', 'frango', 'carne', 'queijo', 'palmito', 'bacalhau', 'charque', 'atum', 'presunto', 'calabresa', 'sardinha', 'salgada', 'pizza', 'ahi poró', 'alho poró', 'alho', 'nortdestina', '2 queijos', 'queijo coalho'];
   if (nm.includes('salgada') || saboresSalgados.some(sabor => nm.includes(sabor))) return 'Empada Salgada';
 
-  return currentCategory || 'Outros';
+  return 'Outros';
 }
 
 // Converter preço para número (trata string com vírgula ou ponto)
@@ -190,30 +193,38 @@ export function Reports() {
     const fetchOrders = async () => {
       try {
         console.log('[Reports] Buscando orders para região:', region);
-        let query = supabase.from('orders').select('*');
+        
+        // Filtro de data: últimos 30 dias para reduzir volume
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        
+        let query = supabase.from('orders').select('id, short_id, point_name, pointName, region, units, status, type, driver_name, driverName, vehicle, created_at, timestamp, delivered_at, delivery_date, lat, lng');
         
         if (region !== 'Todas') {
           query = query.or(`region.eq.${region},region.is.null`);
         }
         
-        const { data, error } = await query.order('created_at', { ascending: false }).limit(3000);
+        // Filtro de data para reduzir volume
+        query = query.gte('created_at', thirtyDaysAgo.toISOString());
+        
+        const { data, error } = await query.order('created_at', { ascending: false }).limit(500);
         
         if (error) throw error;
         console.log('[Reports] Orders brutos do banco:', data?.length || 0, 'registros');
 
-        // Buscar delivery_products para identificar pedidos entregues pelo motorista (via DeliveryDetail)
-        // NOTA: delivery_products NAO TEM coluna 'region' - buscar tudo e filtrar depois
+        // Buscar delivery_products apenas para os pedidos carregados (muito mais eficiente)
+        const orderIds = data.map(o => o.id);
         const { data: deliveryProducts, error: dpError } = await supabase
           .from('delivery_products')
           .select('order_id')
-          .limit(10000);
+          .in('order_id', orderIds);
         if (dpError) console.warn('[Reports] Erro ao buscar delivery_products:', dpError);
 
-        // Buscar delivery_point_details para identificar pedidos entregues via DeliveryPointDetail (segunda rota do V1)
+        // Buscar delivery_point_details apenas para os pedidos carregados
         const { data: deliveryPointDetails, error: dpdError } = await supabase
           .from('delivery_point_details')
           .select('order_id, delivery_photo_url')
-          .limit(10000);
+          .in('order_id', orderIds);
         if (dpdError) console.warn('[Reports] Erro ao buscar delivery_point_details:', dpdError);
 
         // Unir os IDs de ambas as tabelas e mapear fotos
@@ -281,12 +292,12 @@ export function Reports() {
         console.log('[Reports] Realtime status:', status);
       });
 
-    // Polling automático a cada 30s — garante atualização mesmo se o Realtime falhar
-    // Isso faz a página refletir entregas dos motoristas SEM apertar botão nenhum
+    // Polling automático a cada 2 minutos — reduzido para melhorar performance
+    // O Realtime já cuida das atualizações instantâneas
     const pollInterval = setInterval(() => {
       console.log('[Reports] Polling automático — verificando novas entregas...');
       fetchOrders();
-    }, 30_000);
+    }, 120_000);
 
     return () => {
       supabase.removeChannel(channel);
@@ -399,6 +410,8 @@ export function Reports() {
   // Calcular totais reais de unidades para todos os pedidos entregues
   useEffect(() => {
     const calculateAllTotals = async () => {
+      if (orders.length === 0) return;
+
       const totals: Record<string, { units: number; value: number }> = {};
       const catTotals: Record<string, { boxes: number; units: number; value: number }> = {
         'Empada Salgada': { boxes: 0, units: 0, value: 0 },
@@ -410,77 +423,107 @@ export function Reports() {
         'Outros': { boxes: 0, units: 0, value: 0 },
       };
 
-      for (const order of orders) {
-        try {
-          // Buscar itens do pedido
-          const [{ data: orderItems }, { data: deliveryProducts }] = await Promise.all([
-            supabase.from('order_items').select('product_name, quantity, cost_price').eq('order_id', order.id),
-            supabase.from('delivery_products').select('product_name, quantity, category').eq('order_id', order.id)
+      try {
+        const orderIds = orders.map(o => o.id);
+        
+        // Chunk orderIds array into batches of 200 to prevent header too long errors in Supabase
+        const CHUNK_SIZE = 200;
+        let allOrderItems: any[] = [];
+        let allDeliveryProducts: any[] = [];
+
+        for (let i = 0; i < orderIds.length; i += CHUNK_SIZE) {
+          const chunk = orderIds.slice(i, i + CHUNK_SIZE);
+          const [{ data: orderItemsChunk }, { data: deliveryProductsChunk }] = await Promise.all([
+            supabase.from('order_items').select('order_id, product_name, quantity, cost_price').in('order_id', chunk),
+            supabase.from('delivery_products').select('order_id, product_name, quantity, category').in('order_id', chunk)
           ]);
-
-          // Mapa de quantidades (prioriza delivery_products)
-          const quantityMap: Record<string, number> = {};
-          const categoryMap: Record<string, string> = {};
-          const priceMap: Record<string, number> = {};
-          const nameMap: Record<string, string> = {};
           
-          const norm = (s: string) => (s || '').trim().toLowerCase();
-
-          (orderItems || []).forEach((it: any) => {
-            const n = norm(it.product_name);
-            nameMap[n] = it.product_name;
-            quantityMap[n] = Number(it.quantity || 0);
-            priceMap[n] = parsePrice(it.cost_price);
-          });
-
-          (deliveryProducts || []).forEach((it: any) => {
-            const n = norm(it.product_name);
-            if (!nameMap[n]) nameMap[n] = it.product_name;
-            quantityMap[n] = Number(it.quantity || 0); // Sobrescrita absoluta
-            if (it.category) categoryMap[n] = it.category;
-          });
-
-          // Calcular unidades totais usando getUnitsPerBox
-          let totalUnits = 0;
-          let totalValue = 0;
-
-          for (const [normName, qty] of Object.entries(quantityMap)) {
-            if (qty > 0 || qty === 0) { // Inclui zerados no cálculo de valor se necessário, mas foca em > 0 para o total
-              const productName = nameMap[normName];
-              const category = categoryMap[normName] || '';
-              // A quantidade vem em CAIXAS do motorista - converter para unidades
-              const unitsPerBox = getUnitsPerBox(category, productName);
-              const productUnits = qty * unitsPerBox; 
-              const unitPrice = priceMap[normName] || 0;
-              
-              if (qty > 0) {
-                totalUnits += productUnits;
-                totalValue += productUnits * unitPrice;
-              }
-
-              // Acumular por categoria (inferir pelo nome se o banco veio com 'Outros' ou vazio)
-              const inferredCat = inferCategory(productName, category || undefined);
-              const targetCat = catTotals[inferredCat] ? inferredCat : 'Outros';
-              catTotals[targetCat].boxes += qty;
-              catTotals[targetCat].units += productUnits;
-              catTotals[targetCat].value += productUnits * unitPrice;
-            }
-          }
-
-          totals[order.id] = { units: totalUnits, value: totalValue };
-        } catch (err) {
-          console.error(`[Reports] Erro ao calcular totais do pedido ${order.id}:`, err);
-          totals[order.id] = { units: order.units || 0, value: 0 };
+          if (orderItemsChunk) allOrderItems = allOrderItems.concat(orderItemsChunk);
+          if (deliveryProductsChunk) allDeliveryProducts = allDeliveryProducts.concat(deliveryProductsChunk);
         }
+
+        const orderItemsByOrder: Record<string, any[]> = {};
+        const deliveryProductsByOrder: Record<string, any[]> = {};
+
+        allOrderItems.forEach(item => {
+          if (!orderItemsByOrder[item.order_id]) orderItemsByOrder[item.order_id] = [];
+          orderItemsByOrder[item.order_id].push(item);
+        });
+
+        allDeliveryProducts.forEach(item => {
+          if (!deliveryProductsByOrder[item.order_id]) deliveryProductsByOrder[item.order_id] = [];
+          deliveryProductsByOrder[item.order_id].push(item);
+        });
+
+        for (const order of orders) {
+          try {
+            const orderItems = orderItemsByOrder[order.id] || [];
+            const deliveryProducts = deliveryProductsByOrder[order.id] || [];
+
+            // Mapa de quantidades (prioriza delivery_products)
+            const quantityMap: Record<string, number> = {};
+            const categoryMap: Record<string, string> = {};
+            const priceMap: Record<string, number> = {};
+            const nameMap: Record<string, string> = {};
+            
+            const norm = (s: string) => (s || '').trim().toLowerCase();
+
+            orderItems.forEach((it: any) => {
+              const n = norm(it.product_name);
+              nameMap[n] = it.product_name;
+              quantityMap[n] = Number(it.quantity || 0);
+              priceMap[n] = parsePrice(it.cost_price);
+            });
+
+            deliveryProducts.forEach((it: any) => {
+              const n = norm(it.product_name);
+              if (!nameMap[n]) nameMap[n] = it.product_name;
+              quantityMap[n] = Number(it.quantity || 0); // Sobrescrita absoluta
+              if (it.category) categoryMap[n] = it.category;
+            });
+
+            // Calcular unidades totais usando getUnitsPerBox
+            let totalUnits = 0;
+            let totalValue = 0;
+
+            for (const [normName, qty] of Object.entries(quantityMap)) {
+              if (qty > 0 || qty === 0) { // Inclui zerados no cálculo de valor se necessário, mas foca em > 0 para o total
+                const productName = nameMap[normName];
+                const category = categoryMap[normName] || '';
+                // A quantidade vem em CAIXAS do motorista - converter para unidades
+                const unitsPerBox = getUnitsPerBox(category, productName);
+                const productUnits = qty * unitsPerBox; 
+                const unitPrice = priceMap[normName] || 0;
+                
+                if (qty > 0) {
+                  totalUnits += productUnits;
+                  totalValue += productUnits * unitPrice;
+                }
+
+                // Acumular por categoria (inferir pelo nome se o banco veio com 'Outros' ou vazio)
+                const inferredCat = normalizeCategory(category) || inferCategory(productName);
+                const targetCat = catTotals[inferredCat] ? inferredCat : 'Outros';
+                catTotals[targetCat].boxes += qty;
+                catTotals[targetCat].units += productUnits;
+                catTotals[targetCat].value += productUnits * unitPrice;
+              }
+            }
+
+            totals[order.id] = { units: totalUnits, value: totalValue };
+          } catch (err) {
+            console.error(`[Reports] Erro ao calcular totais do pedido ${order.id}:`, err);
+            totals[order.id] = { units: order.units || 0, value: 0 };
+          }
+        }
+      } catch (error) {
+        console.error('[Reports] Erro ao buscar itens para totais:', error);
       }
 
       setCalculatedTotals(totals);
       setReportCategoryTotals(catTotals);
     };
 
-    if (orders.length > 0) {
-      calculateAllTotals();
-    }
+    calculateAllTotals();
   }, [orders]);
 
   const handleEdit = (order: Order) => {
@@ -1007,7 +1050,7 @@ export function Reports() {
         
         products.push({
           name: p.name,
-          category: inferCategory(p.name, p.category),
+          category: normalizeCategory(p.category) || inferCategory(p.name),
           quantity: quantityMap[n] || 0,
           cost_price: finalPrice,
           image_url: p.image_url || p.photo_url || undefined,
@@ -1020,7 +1063,7 @@ export function Reports() {
         if (!seen.has(n)) {
           products.push({
             name: nameMap[n] || n,
-            category: inferCategory(nameMap[n] || n, categoryMap[n]),
+            category: normalizeCategory(categoryMap[n]) || inferCategory(nameMap[n] || n),
             quantity: qty,
             cost_price: priceMap[n] || 0,
             sort_order: 999
@@ -1611,7 +1654,7 @@ export function Reports() {
                                  CATEGORIES_ORDER.forEach(cat => { grouped[cat] = []; });
                                  grouped['Outros'] = [];
                                  data.products.forEach((p) => {
-                                   const inferred = inferCategory(p.name, p.category);
+                                   const inferred = normalizeCategory(p.category) || inferCategory(p.name);
                                    const cat = grouped[inferred] ? inferred : 'Outros';
                                    grouped[cat].push(p);
                                  });
@@ -1694,9 +1737,9 @@ export function Reports() {
                                                     ) : (
                                                       <div className={cn(
                                                         'w-8 h-8 rounded-lg flex items-center justify-center text-base flex-shrink-0 border',
-                                                        (CATEGORY_COLORS as any)[inferCategory(p.name, p.category)] || 'bg-slate-100 text-slate-700 border-slate-200'
+                                                        (CATEGORY_COLORS as any)[normalizeCategory(p.category) || inferCategory(p.name)] || 'bg-slate-100 text-slate-700 border-slate-200'
                                                       )}>
-                                                        {(CATEGORY_ICONS as any)[inferCategory(p.name, p.category)] || '📦'}
+                                                        {(CATEGORY_ICONS as any)[normalizeCategory(p.category) || inferCategory(p.name)] || '📦'}
                                                       </div>
                                                     )}
                                                     <div className="min-w-0">

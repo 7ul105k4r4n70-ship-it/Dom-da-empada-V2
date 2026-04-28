@@ -29,6 +29,7 @@ export interface Order {
   point_name?: string;
   timestamp: string;
   created_at?: string;
+  delivered_at?: string;
   units: number;
   status: 'COMPLETED' | 'IN PROGRESS' | 'IN_PROGRESS' | 'AWAITING LOGISTICS' | 'IDLE' | 'CANCELLED' | 'DELIVERED' | 'IN_TRANSIT' | 'ACCEPTED';
   type: 'REGULAR' | 'EXTRA DELIVERY';

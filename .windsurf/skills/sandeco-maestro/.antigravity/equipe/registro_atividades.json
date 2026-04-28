@@ -1,0 +1,54 @@
+{
+  "id": "fix-relatorios-motoristas-001",
+  "descricao": "Corrigir relatórios de motoristas: apenas 4 de 23 pedidos aparecem como entregues. Os 19 restantes ficam como 'Aguardando Entrega' mesmo quando o motorista já entregou via app V1.",
+  "data_criacao": "2025-04-25T19:15:00-03:00",
+  "status": "EM_ANDAMENTO",
+  "atividades": [
+    {
+      "id": "EXP-001",
+      "titulo": "Explorador: Mapear fluxo de dados V1→V2",
+      "agente": "Explorador",
+      "status": "EM_ANDAMENTO",
+      "pre_requisitos": [],
+      "descricao": "Investigar como o app V1 (motorista) salva entregas no banco e como o V2 (admin) busca no relatório. Arquivos alvo: V1/DeliveryDetail.tsx, V2/Reports.tsx, V2/supabase.ts"
+    },
+    {
+      "id": "AUD-001",
+      "titulo": "Auditor: Identificar falha de filtro",
+      "agente": "Auditor",
+      "status": "PENDENTE",
+      "pre_requisitos": ["EXP-001"],
+      "descricao": "Analisar por que 19 pedidos com status 'Finalizado'/'COMPLETED' não passam no filtro isDeliveredStatus() do Reports.tsx"
+    },
+    {
+      "id": "COND-001",
+      "titulo": "Condutor: Aprovar plano de correção",
+      "agente": "Condutor",
+      "status": "PENDENTE",
+      "pre_requisitos": ["AUD-001"],
+      "descricao": "Decompor a correção em tarefas atômicas e aprovar execução"
+    },
+    {
+      "id": "EXEC-001",
+      "titulo": "Executor: Aplicar correção em Reports.tsx",
+      "agente": "Executor",
+      "status": "PENDENTE",
+      "pre_requisitos": ["COND-001"],
+      "descricao": "Implementar a correção identificada pelo Auditor no arquivo Reports.tsx"
+    },
+    {
+      "id": "AUD-002",
+      "titulo": "Auditor: Validar correção",
+      "agente": "Auditor",
+      "status": "PENDENTE",
+      "pre_requisitos": ["EXEC-001"],
+      "descricao": "Verificar se todos os 23 pedidos agora aparecem corretamente no relatório"
+    }
+  ],
+  "travas_ativas": [],
+  "contexto": {
+    "projeto": "Dom-da-empada-V2",
+    "arquivo_principal": "src/pages/Reports.tsx",
+    "app_motorista": "Dom-da-empada-V1"
+  }
+}

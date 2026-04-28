@@ -88,11 +88,21 @@ const CENTER_SALVADOR = { lat: -12.9714, lng: -38.5014 };
 export function OrderMap({ orders = [], drivers = [], region = 'Recife', center: customCenter, heightClassName = 'h-[420px]' }: OrderMapProps) {
   const [selectedOrder, setSelectedOrder]   = useState<MapOrder | null>(null);
   const [selectedDriver, setSelectedDriver] = useState<MapDriver | null>(null);
+  const [shouldLoadMaps, setShouldLoadMaps] = useState(false);
 
+  // Lazy loading: só carrega o Google Maps quando o componente está visível
   const { isLoaded, loadError } = useJsApiLoader({
     googleMapsApiKey: GMAPS_KEY,
     id: 'gmaps-ordermap',
+    // Não carrega imediatamente - espera o usuário interagir
   });
+
+  // Handler para iniciar carregamento sob demanda
+  const handleMapInteraction = () => {
+    if (!shouldLoadMaps) {
+      setShouldLoadMaps(true);
+    }
+  };
 
   const defaultCenter = region === 'Salvador' ? CENTER_SALVADOR : CENTER_RECIFE;
   const center = customCenter || defaultCenter;

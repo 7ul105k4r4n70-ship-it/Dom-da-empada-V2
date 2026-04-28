@@ -1,0 +1,143 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "System user with role and region",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["admin", "coordenador", "analista"] },
+        "region": { "type": "string", "enum": ["Recife", "Salvador", "Global"] },
+        "photoUrl": { "type": "string", "format": "uri" },
+        "status": { "type": "string", "enum": ["Ativo", "Inativo"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "email", "role", "region", "status"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Logistics order for a franchise point",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "pointId": { "type": "string" },
+        "pointName": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "units": { "type": "number" },
+        "status": { "type": "string", "enum": ["COMPLETED", "IN PROGRESS", "AWAITING LOGISTICS", "IDLE"] },
+        "type": { "type": "string", "enum": ["REGULAR", "EXTRA DELIVERY"] },
+        "driverName": { "type": "string" },
+        "driverPhoto": { "type": "string", "format": "uri" },
+        "vehicle": { "type": "string" },
+        "region": { "type": "string", "enum": ["Recife", "Salvador"] },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "statusHistory": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "status": { "type": "string" },
+              "timestamp": { "type": "string", "format": "date-time" },
+              "userName": { "type": "string" },
+              "userId": { "type": "string" }
+            }
+          }
+        }
+      },
+      "required": ["id", "pointId", "pointName", "timestamp", "units", "status", "type", "region"]
+    },
+    "FranchisePoint": {
+      "title": "Franchise Point",
+      "description": "A physical store or hub",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "location": { "type": "string" },
+        "region": { "type": "string", "enum": ["Recife", "Salvador"] },
+        "activeOrders": { "type": "number" },
+        "volumeToday": { "type": "number" },
+        "status": { "type": "string" },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" }
+      },
+      "required": ["id", "name", "location", "region"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Empada flavor and pricing",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "costPrice": { "type": "number" },
+        "suggestedPrice": { "type": "number" },
+        "imageUrl": { "type": "string", "format": "uri" }
+      },
+      "required": ["id", "name", "costPrice", "suggestedPrice"]
+    },
+    "Transfer": {
+      "title": "Stock Transfer",
+      "description": "Movement between regions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "from": { "type": "string", "enum": ["Recife", "Salvador"] },
+        "to": { "type": "string", "enum": ["Recife", "Salvador"] },
+        "quantity": { "type": "number" },
+        "item": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "responsible": { "type": "string" },
+        "status": { "type": "string", "enum": ["IN_TRANSIT", "COMPLETED"] }
+      },
+      "required": ["id", "from", "to", "quantity", "item", "timestamp", "responsible", "status"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "In-app notification for users",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "type": { "type": "string", "enum": ["order", "schedule", "stock", "system"] },
+        "severity": { "type": "string", "enum": ["info", "warning", "critical"] },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "read": { "type": "boolean" },
+        "userId": { "type": "string" },
+        "link": { "type": "string" }
+      },
+      "required": ["id", "title", "message", "type", "severity", "timestamp", "read", "userId"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Delivery orders"
+    },
+    "/franchisePoints/{pointId}": {
+      "schema": "FranchisePoint",
+      "description": "Franchise locations"
+    },
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Product catalog"
+    },
+    "/transfers/{transferId}": {
+      "schema": "Transfer",
+      "description": "Inter-region transfers"
+    },
+    "/notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "User notifications"
+    }
+  }
+}

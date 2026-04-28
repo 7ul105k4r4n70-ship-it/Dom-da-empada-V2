@@ -148,8 +148,18 @@ export function KPIFlowDistributionCard({ region, unit, selectedPoint: selectedP
 
   useEffect(() => {
     setLoadingOrders(true);
+    
+    // Otimização: Carregar apenas pedidos dos últimos 14 dias para KPIs
+    const fourteenDaysAgo = new Date();
+    fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);
+    
     const unsub = subscribeToTable('orders', { region }, (data) => {
-      setOrders((data || []) as Order[]);
+      // Filtrar apenas pedidos recentes
+      const recentOrders = (data || []).filter(order => {
+        const orderDate = new Date(order.created_at || order.timestamp || Date.now());
+        return orderDate >= fourteenDaysAgo;
+      });
+      setOrders(recentOrders as Order[]);
       setLoadingOrders(false);
     }, 'created_at');
 

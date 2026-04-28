@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/lib/utils';
-import { subscribeToTable, deleteRow } from '@/supabase';
+import { supabase, subscribeToTable, deleteRow } from '@/supabase';
 import { type Order, type Region, type User } from '@/types';
 import { OrderDetailsModal } from '@/components/OrderDetailsModal';
 import { OrderMap } from '@/components/OrderMap';
@@ -33,52 +33,46 @@ export function Orders() {
   const [drivers, setDrivers] = useState<User[]>([]);
 
   useEffect(() => {
-    console.log('[Orders] ===== EFEITO INICIADO =====');
-    console.log('[Orders] Region atual:', region);
     setLoading(true);
-    // Carrega pedidos com filtro de região - admin pode ver todas, mas dados não se misturam
-    // Quando region é 'Todas', não aplicar filtro de região no backend (buscar tudo)
     const regionFilter = region === 'Todas' ? {} : { region };
-    console.log('[Orders] Filtro de região:', regionFilter);
-    console.log('[Orders] Iniciando subscribeToTable orders...');
+    
+    // Configurar o dateRange se as datas estiverem definidas
+    let dateRange: { column: string; start?: string; end?: string } | undefined;
+    if (startDate || endDate) {
+      dateRange = { column: 'created_at' };
+      if (startDate) dateRange.start = startDate + 'T00:00:00.000Z';
+      if (endDate) dateRange.end = endDate + 'T23:59:59.999Z';
+    }
+
     const unsubOrders = subscribeToTable('orders', regionFilter, (data) => {
-      console.log('[Orders] ✅ Callback orders recebido!');
-      if (data && data.length > 0) {
-        const uniqueRegions = Array.from(new Set(data.map((o: any) => o.region)));
-        console.log('[Orders] Regiões encontradas:', uniqueRegions);
-        const withoutRegion = data.filter((o: any) => !o.region).length;
-        if (withoutRegion > 0) console.warn('[Orders] ⚠️', withoutRegion, 'pedidos SEM região!');
-        const statuses = data.reduce((acc: Record<string, number>, o: any) => {
-          acc[o.status] = (acc[o.status] || 0) + 1;
-          return acc;
-        }, {});
-        console.log('[Orders] Status encontrados:', statuses);
-        console.log('[Orders] Primeiros 3 pedidos:', data.slice(0, 3).map((o: any) => ({
-          id: o.short_id || o.id,
-          point_name: o.point_name,
-          region: o.region,
-          status: o.status,
-          units: o.units
-        })));
-      } else {
-        console.warn('[Orders] ⚠️ NENHUM PEDIDO RECEBIDO!');
-      }
       setOrders(data);
       setLoading(false);
-    }, 'created_at');
+    }, 'created_at', false, 1000, dateRange); // Limite de 1000 pedidos e aplica filtros de data
 
-    console.log('[Orders] Carregando motoristas...');
     const unsubDrivers = subscribeToTable('app_users', regionFilter, (data) => {
-      console.log('[Orders] Motoristas recebidos:', data?.length || 0);
       setDrivers(data.filter((u: User) => u.role === 'motorista'));
-    }, 'created_at');
+    }, 'created_at', false, 200); // Limite de 200 motoristas
+
+    const locationChannel = supabase
+      .channel('driver_gps_locations')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'app_users' }, (payload) => {
+        const updated = payload.new as any;
+        if (updated.role === 'motorista' && updated.lat != null && updated.lng != null) {
+          setDrivers(prev => prev.map((d: any) =>
+            d.id === updated.id
+              ? { ...d, lat: updated.lat, lng: updated.lng, location_updated_at: updated.location_updated_at }
+              : d
+          ));
+        }
+      })
+      .subscribe();
 
     return () => {
-      console.log('[Orders] Limpando subscriptions...');
       unsubOrders();
       unsubDrivers();
+      supabase.removeChannel(locationChannel);
     };
-  }, [region]);
+  }, [region, startDate, endDate]);
 
   const filteredOrders = orders.filter(order => {
     const pName = order.pointName || order.point_name || '';
