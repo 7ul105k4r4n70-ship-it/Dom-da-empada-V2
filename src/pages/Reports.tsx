@@ -194,38 +194,56 @@ export function Reports() {
       try {
         console.log('[Reports] Buscando orders para região:', region);
         
-        // Filtro de data: últimos 30 dias para reduzir volume
-        const thirtyDaysAgo = new Date();
-        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-        
         let query = supabase.from('orders').select('id, short_id, point_name, pointName, region, units, status, type, driver_name, driverName, vehicle, created_at, timestamp, delivered_at, delivery_date, lat, lng');
         
         if (region !== 'Todas') {
           query = query.or(`region.eq.${region},region.is.null`);
         }
         
-        // Filtro de data para reduzir volume
-        query = query.gte('created_at', thirtyDaysAgo.toISOString());
+        // Filtro de data otimizado
+        if (filterStartDate) {
+          const startDate = new Date(filterStartDate);
+          startDate.setHours(0, 0, 0, 0);
+          query = query.gte('created_at', startDate.toISOString());
+        } else {
+          // Padrão: últimos 7 dias para evitar carregar o banco inteiro
+          const sevenDaysAgo = new Date();
+          sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+          sevenDaysAgo.setHours(0, 0, 0, 0);
+          query = query.gte('created_at', sevenDaysAgo.toISOString());
+        }
+
+        if (filterEndDate) {
+          const endDate = new Date(filterEndDate);
+          endDate.setHours(23, 59, 59, 999);
+          query = query.lte('created_at', endDate.toISOString());
+        }
         
-        const { data, error } = await query.order('created_at', { ascending: false }).limit(500);
+        const { data, error } = await query.order('created_at', { ascending: false }).limit(200);
         
         if (error) throw error;
         console.log('[Reports] Orders brutos do banco:', data?.length || 0, 'registros');
 
-        // Buscar delivery_products apenas para os pedidos carregados (muito mais eficiente)
         const orderIds = data.map(o => o.id);
-        const { data: deliveryProducts, error: dpError } = await supabase
-          .from('delivery_products')
-          .select('order_id')
-          .in('order_id', orderIds);
-        if (dpError) console.warn('[Reports] Erro ao buscar delivery_products:', dpError);
-
-        // Buscar delivery_point_details apenas para os pedidos carregados
-        const { data: deliveryPointDetails, error: dpdError } = await supabase
-          .from('delivery_point_details')
-          .select('order_id, delivery_photo_url')
-          .in('order_id', orderIds);
-        if (dpdError) console.warn('[Reports] Erro ao buscar delivery_point_details:', dpdError);
+        
+        // [CONGELADO/FROZEN] - Otimização de Performance
+        // IMPORTANTE: NÃO ALTERE esta lógica de paginação e chunking (CHUNK_SIZE = 100) 
+        // e o filtro de data padrão de 7 dias, a menos que o usuário EXPLICITAMENTE solicite!
+        // Chunking seguro implementado para evitar HTTP 414 URI Too Long no Supabase.
+        const CHUNK_SIZE = 100;
+        let deliveryProducts: any[] = [];
+        let deliveryPointDetails: any[] = [];
+        
+        for (let i = 0; i < orderIds.length; i += CHUNK_SIZE) {
+          const chunk = orderIds.slice(i, i + CHUNK_SIZE);
+          if (chunk.length === 0) break;
+          const [{ data: dpChunk }, { data: dpdChunk }] = await Promise.all([
+            supabase.from('delivery_products').select('order_id').in('order_id', chunk),
+            supabase.from('delivery_point_details').select('order_id, delivery_photo_url').in('order_id', chunk)
+          ]);
+          if (dpChunk) deliveryProducts = deliveryProducts.concat(dpChunk);
+          if (dpdChunk) deliveryPointDetails = deliveryPointDetails.concat(dpdChunk);
+        }
 
         // Unir os IDs de ambas as tabelas e mapear fotos
         const photoMap: Record<string, string> = {};
@@ -303,7 +321,7 @@ export function Reports() {
       supabase.removeChannel(channel);
       clearInterval(pollInterval);
     };
-  }, [region]);
+  }, [region, filterStartDate, filterEndDate]);
 
   // Lista única de pontos e motoristas para os dropdowns
   const uniquePoints = useMemo(() => {
@@ -426,8 +444,10 @@ export function Reports() {
       try {
         const orderIds = orders.map(o => o.id);
         
-        // Chunk orderIds array into batches of 200 to prevent header too long errors in Supabase
-        const CHUNK_SIZE = 200;
+        // [CONGELADO/FROZEN] - Otimização de Performance
+        // IMPORTANTE: NÃO ALTERE CHUNK_SIZE = 100 a menos que requisitado explicitamente.
+        // Chunk orderIds array into batches of 100 to prevent header too long errors in Supabase
+        const CHUNK_SIZE = 100;
         let allOrderItems: any[] = [];
         let allDeliveryProducts: any[] = [];
 
