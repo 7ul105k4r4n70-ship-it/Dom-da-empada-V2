@@ -13,7 +13,9 @@ import {
   Navigation,
   FileText,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Pencil,
+  Trash2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/lib/utils';
@@ -33,6 +35,7 @@ interface ScheduleItem {
   status: 'Ativa' | 'Conflito' | 'Aguardando' | 'Concluída';
   color: string;
   orderIds?: string[];
+  points?: Array<{ id: string; name: string; time: string; region: string }>;
 }
 
 export function Schedule() {
@@ -55,19 +58,18 @@ export function Schedule() {
   const [loadingPoints, setLoadingPoints] = useState(true);
   const [scheduleItems, setScheduleItems] = useState<ScheduleItem[]>([]);
   const [loadingSchedules, setLoadingSchedules] = useState(true);
+  const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null);
   const [newSchedule, setNewSchedule] = useState<{
-    points: Array<{ pointId: string; time: string }>;
+    points: Array<{ pointId: string }>;
     driverId: string;
     vehicleId: string;
     date: string;
-    baseTime: string;
     type: string;
   }>({
-    points: [{ pointId: '', time: '' }],
+    points: [{ pointId: '' }],
     driverId: '',
     vehicleId: '',
     date: '',
-    baseTime: '',
     type: 'Rota Padrão'
   });
 
@@ -121,6 +123,14 @@ export function Schedule() {
     fetchData();
   }, []);
 
+  // Formata data local como YYYY-MM-DD (evita problema de timezone do toISOString)
+  const fmtDate = (d: Date) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
   // Carrega agendamentos do Supabase (período de 4 semanas)
   const loadSchedules = async () => {
     setLoadingSchedules(true);
@@ -128,16 +138,17 @@ export function Schedule() {
       const periodEnd = new Date(currentWeekStart);
       periodEnd.setDate(periodEnd.getDate() + 27);
 
+      const startStr = fmtDate(currentWeekStart);
+      const endStr = fmtDate(periodEnd);
+
       let query = supabase.from('schedules').select('*');
       if (region !== 'Todas') {
         query = query.eq('region', region);
       }
-      const fetchP = query
-        .gte('scheduled_date', currentWeekStart.toISOString().split('T')[0])
-        .lte('scheduled_date', periodEnd.toISOString().split('T')[0])
-        .order('scheduled_date', { ascending: true }) as any;
-      const timeoutP = new Promise<{ data: any[]; error: null }>(r => setTimeout(() => r({ data: [], error: null }), 8000));
-      const { data, error } = await Promise.race([fetchP, timeoutP]);
+      const { data, error } = await query
+        .gte('scheduled_date', startStr)
+        .lte('scheduled_date', endStr)
+        .order('scheduled_date', { ascending: true });
 
       if (error) {
         console.error('Erro ao carregar agendamentos:', error);
@@ -146,19 +157,34 @@ export function Schedule() {
         return;
       }
 
-      const items: ScheduleItem[] = (data || []).map((s: any) => ({
-        id: s.id,
-        day: new Date(s.scheduled_date + 'T00:00:00').getDate(),
-        date: s.scheduled_date,
-        type: s.title || 'Rota',
-        location: s.location || '',
-        time: s.scheduled_time || '',
-        vehicle: s.vehicle_name || '',
-        driver: s.driver_name || '',
-        status: s.status || 'Ativa',
-        color: s.color || 'primary',
-        orderIds: s.order_ids || [],
-      }));
+      console.log('CALENDARIO - Agendamentos recebidos:', data?.length || 0, data);
+      
+      const items: ScheduleItem[] = (data || []).map((s: any) => {
+        let parsedPoints: Array<{ id: string; name: string; time: string; region: string }> | undefined;
+        if (s.points_json) {
+          try { parsedPoints = JSON.parse(s.points_json); } catch { /* ignore */ }
+        }
+        if (!parsedPoints && s.location && s.location.includes('→')) {
+          const names = s.location.split('→').map((n: string) => n.trim());
+          parsedPoints = names.map((name: string, idx: number) => ({
+            id: `stop-${idx}`, name, time: '', region: s.region || ''
+          }));
+        }
+        return {
+          id: s.id,
+          day: parseInt(s.scheduled_date.split('-')[2], 10),
+          date: s.scheduled_date,
+          type: s.title || 'Rota',
+          location: s.location || '',
+          time: s.scheduled_time || '',
+          vehicle: s.vehicle_name || '',
+          driver: s.driver_name || '',
+          status: s.status || 'Ativa',
+          color: s.color || 'primary',
+          orderIds: s.order_ids || [],
+          points: parsedPoints,
+        };
+      });
       setScheduleItems(items);
     } catch (e) {
       console.error('Erro ao carregar agendamentos:', e);
@@ -199,6 +225,62 @@ export function Schedule() {
     fetchTripOrders(trip);
   };
 
+  const handleDeleteSchedule = async (id: string) => {
+    if (!confirm('Deseja realmente excluir este agendamento?')) return;
+    // Remove imediatamente do estado local
+    setScheduleItems(prev => prev.filter(item => item.id !== id));
+    if (selectedTrip?.id === id) setSelectedTrip(null);
+    try {
+      const { error } = await supabase.from('schedules').delete().eq('id', id);
+      if (error) throw error;
+    } catch (err: any) {
+      console.error('Erro ao excluir agendamento:', err);
+      alert('Erro ao excluir agendamento: ' + (err?.message || JSON.stringify(err)));
+      // Recarrega em caso de erro para restaurar
+      loadSchedules();
+    }
+  };
+
+  const handleEditStart = (item: ScheduleItem) => {
+    console.log('EDITAR - Item clicado:', item);
+    
+    const editPoints = item.points && item.points.length > 0
+      ? item.points.map(p => ({ pointId: p.id.startsWith('stop-') ? '' : p.id }))
+      : [{ pointId: '' }];
+    
+    const matchedDriver = drivers.find(d => d.name === item.driver);
+    const matchedVehicle = vehicles.find(v => (v.model + ' ' + v.plate) === item.vehicle);
+    
+    console.log('EDITAR - Driver encontrado:', matchedDriver);
+    console.log('EDITAR - Vehicle encontrado:', matchedVehicle);
+    console.log('EDITAR - Points:', editPoints);
+
+    setEditingScheduleId(item.id);
+    setNewSchedule({
+      points: editPoints,
+      driverId: matchedDriver?.id || '',
+      vehicleId: matchedVehicle?.id || '',
+      date: item.date,
+      type: item.type || 'Rota Padrão'
+    });
+    
+    // Rolar até o form
+    setTimeout(() => {
+      document.getElementById('novo-agendamento-form')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 100);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingScheduleId(null);
+    setNewSchedule({
+      points: [{ pointId: '' }],
+      driverId: '',
+      vehicleId: '',
+      date: '',
+      type: 'Rota Padrão'
+    });
+  };
+
   const filteredSchedule = useMemo(() => {
     return scheduleItems.filter(item => {
       const matchDriver = !filters.driver || item.driver === filters.driver;
@@ -214,9 +296,9 @@ export function Schedule() {
 
   const renderDay = (date: Date, index?: number) => {
     const dayNum = date.getDate();
-    const dateStr = date.toISOString().split('T')[0];
-    const items = filteredSchedule.filter(item => item.date === dateStr);
-    const isToday = new Date().toISOString().split('T')[0] === dateStr;
+    const dateStr = fmtDate(date);
+    const items = scheduleItems.filter(item => item.date === dateStr);
+    const isToday = fmtDate(new Date()) === dateStr;
     
     return (
       <div key={dateStr} className="border-r border-slate-100 p-3 space-y-2 hover:bg-slate-50 transition-colors group min-h-[120px] last:border-r-0">
@@ -249,13 +331,19 @@ export function Schedule() {
                 {item.status === 'Conflito' && <AlertTriangle className="w-3 h-3 text-red-600" />}
               </div>
               <p className={cn(
-                "text-[11px] font-medium leading-tight",
+                "text-[11px] font-medium leading-tight truncate",
                 item.status === 'Conflito' ? "text-red-900" : "text-on-surface"
-              )}>{item.location}</p>
+              )} title={item.location}>
+                {item.points && item.points.length > 1
+                  ? `${item.points.length} paradas`
+                  : item.location}
+              </p>
               <p className={cn(
                 "text-[9px]",
                 item.status === 'Conflito' ? "text-red-900/70" : "text-on-surface-variant"
-              )}>{item.time} • {item.vehicle}</p>
+              )}>
+                {item.vehicle}
+              </p>
               <p className="text-[8px] font-bold opacity-60 uppercase">{item.driver}</p>
             </div>
           ))}
@@ -476,18 +564,31 @@ export function Schedule() {
                     )}>{selectedTrip.type}</p>
                     <h4 className="text-sm font-black text-on-surface">{selectedTrip.location}</h4>
                   </div>
-                  <button 
-                    onClick={() => setSelectedTrip(null)}
-                    className="p-1 hover:bg-black/5 rounded-full transition-colors"
-                  >
-                    <X className="w-3 h-3 text-on-surface-variant" />
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => handleEditStart(selectedTrip)}
+                      className="p-1 hover:bg-amber-100 rounded-full transition-colors"
+                      title="Editar agendamento"
+                    >
+                      <Pencil className="w-3 h-3 text-amber-600" />
+                    </button>
+                    <button
+                      onClick={() => handleDeleteSchedule(selectedTrip.id)}
+                      className="p-1 hover:bg-red-100 rounded-full transition-colors"
+                      title="Excluir agendamento"
+                    >
+                      <Trash2 className="w-3 h-3 text-red-500" />
+                    </button>
+                    <button
+                      onClick={() => setSelectedTrip(null)}
+                      className="p-1 hover:bg-black/5 rounded-full transition-colors ml-1"
+                    >
+                      <X className="w-3 h-3 text-on-surface-variant" />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="flex items-center gap-2 text-xs">
-                  <Clock className="w-3 h-3 text-on-surface-variant" />
-                  <span className="font-medium">{selectedTrip.time}</span>
-                  <span className="text-on-surface-variant">•</span>
                   <Truck className="w-3 h-3 text-on-surface-variant" />
                   <span className="text-on-surface-variant">{selectedTrip.vehicle}</span>
                 </div>
@@ -495,6 +596,23 @@ export function Schedule() {
                   <User className="w-3 h-3 text-on-surface-variant" />
                   <span className="text-on-surface-variant">{selectedTrip.driver}</span>
                 </div>
+
+                {/* Pontos/Paradas da rota */}
+                {selectedTrip.points && selectedTrip.points.length > 0 && (
+                  <div className="bg-white rounded-lg border border-slate-100 p-2 space-y-1.5">
+                    <p className="text-[10px] font-bold text-on-surface-variant uppercase">Rota com {selectedTrip.points.length} parada(s)</p>
+                    {selectedTrip.points.map((point, idx) => (
+                      <div key={point.id} className="flex items-center gap-2 text-xs">
+                        <span className="w-5 h-5 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[10px] font-bold">
+                          {idx + 1}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-bold text-on-surface truncate">{point.name}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {loadingOrders ? (
                   <div className="flex items-center justify-center py-2">
@@ -521,10 +639,20 @@ export function Schedule() {
           </AnimatePresence>
 
           {/* Novo Agendamento - Card na Sidebar */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-4 space-y-4">
-            <div className="flex items-center gap-2">
-              <Plus className="w-4 h-4 text-primary" />
-              <h3 className="text-sm font-extrabold">Novo Agendamento</h3>
+          <div id="novo-agendamento-form" className="bg-white rounded-xl shadow-sm border border-slate-100 p-4 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                {editingScheduleId ? <Pencil className="w-4 h-4 text-amber-500" /> : <Plus className="w-4 h-4 text-primary" />}
+                <h3 className="text-sm font-extrabold">{editingScheduleId ? 'Editar Agendamento' : 'Novo Agendamento'}</h3>
+              </div>
+              {editingScheduleId && (
+                <button
+                  onClick={handleCancelEdit}
+                  className="text-[10px] text-on-surface-variant hover:text-red-500 font-bold transition-colors"
+                >
+                  Cancelar
+                </button>
+              )}
             </div>
             <div className="space-y-3">
               {/* Motorista */}
@@ -606,26 +734,11 @@ export function Schedule() {
                           <option key={p.id} value={p.id}>{p.name}</option>
                         ))}
                       </select>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className="text-[9px] text-on-surface-variant">Hora</label>
-                          <input
-                            type="time"
-                            value={point.time}
-                            onChange={(e) => {
-                              const updated = [...newSchedule.points];
-                              updated[index] = { ...updated[index], time: e.target.value };
-                              setNewSchedule({ ...newSchedule, points: updated });
-                            }}
-                            className="w-full bg-white border border-slate-200 rounded-lg text-xs focus:ring-primary py-1 px-2"
-                          />
+                      {selectedPoint && (
+                        <div className="mt-1">
+                          <span className="text-[9px] text-on-surface-variant">{selectedPoint.region}</span>
                         </div>
-                        {selectedPoint && (
-                          <div className="flex items-end">
-                            <span className="text-[9px] text-on-surface-variant pb-1.5 truncate">{selectedPoint.region}</span>
-                          </div>
-                        )}
-                      </div>
+                      )}
                     </div>
                   );
                 })}
@@ -634,7 +747,7 @@ export function Schedule() {
                   onClick={() => {
                     setNewSchedule({
                       ...newSchedule,
-                      points: [...newSchedule.points, { pointId: '', time: '' }]
+                      points: [...newSchedule.points, { pointId: '' }]
                     });
                   }}
                   className="w-full py-1.5 border border-dashed border-primary/40 text-primary text-[10px] font-bold rounded-lg hover:bg-primary/5 transition-all flex items-center justify-center gap-1"
@@ -646,55 +759,69 @@ export function Schedule() {
 
               <button
                 onClick={async () => {
-                  const validPoints = newSchedule.points.filter(p => p.pointId && p.time);
+                  const validPoints = newSchedule.points.filter(p => p.pointId);
                   if (validPoints.length === 0 || !newSchedule.driverId || !newSchedule.vehicleId || !newSchedule.date) {
-                    alert('Por favor, preencha motorista, veículo, data e ao menos um ponto com hora.');
+                    alert('Por favor, preencha motorista, veículo, data e ao menos um ponto.');
                     return;
                   }
                   try {
                     const selectedDriver = drivers.find(d => d.id === newSchedule.driverId);
                     const selectedVehicle = vehicles.find(v => v.id === newSchedule.vehicleId);
                     
-                    const inserts = validPoints.map((point, idx) => {
-                      const selectedPoint = points.find(p => p.id === point.pointId);
-                      return {
-                        title: validPoints.length > 1 ? `Rota ${idx + 1}/${validPoints.length}` : newSchedule.type,
-                        location: selectedPoint?.name || '',
-                        scheduled_date: newSchedule.date,
-                        scheduled_time: point.time,
-                        vehicle_id: newSchedule.vehicleId,
-                        vehicle_name: selectedVehicle ? (selectedVehicle.model + ' ' + selectedVehicle.plate) : '',
-                        driver_id: newSchedule.driverId,
-                        driver_name: selectedDriver?.name || '',
-                        region: region,
-                        status: 'Ativa',
-                        color: 'primary',
-                        stops_count: validPoints.length,
-                        order_ids: [],
-                      };
+                    const pointData = validPoints.map(p => {
+                      const selectedPoint = points.find(pt => pt.id === p.pointId);
+                      return { id: p.pointId, name: selectedPoint?.name || '', time: '', region: selectedPoint?.region || '' };
                     });
                     
-                    const { error } = await supabase.from('schedules').insert(inserts);
+                    const locationStr = pointData.map(p => p.name).join(' → ');
                     
-                    if (error) throw error;
-                    alert(`${validPoints.length} agendamento(s) criado(s) com sucesso!`);
+                    const saveData = {
+                      title: validPoints.length > 1 ? `Rota com ${validPoints.length} paradas` : newSchedule.type,
+                      location: locationStr,
+                      scheduled_date: newSchedule.date,
+                      scheduled_time: '',
+                      vehicle_id: newSchedule.vehicleId,
+                      vehicle_name: selectedVehicle ? (selectedVehicle.model + ' ' + selectedVehicle.plate) : '',
+                      driver_id: newSchedule.driverId,
+                      driver_name: selectedDriver?.name || '',
+                      region: region || '',
+                      status: 'Ativa',
+                      color: 'primary',
+                      stops_count: validPoints.length,
+                      order_ids: [],
+                    };
+                    
+                    if (editingScheduleId) {
+                      const { error } = await supabase.from('schedules').update(saveData).eq('id', editingScheduleId);
+                      if (error) throw error;
+                      alert('Agendamento atualizado!');
+                      setEditingScheduleId(null);
+                    } else {
+                      console.log('INSERT - saveData:', saveData);
+                      const { data, error } = await supabase.from('schedules').insert(saveData).select();
+                      console.log('INSERT - result:', { data, error });
+                      if (error) throw error;
+                      alert(`Agendamento criado! ${validPoints.length} parada(s)`);
+                    }
+                    
                     setNewSchedule({
-                      points: [{ pointId: '', time: '' }],
+                      points: [{ pointId: '' }],
                       driverId: '',
                       vehicleId: '',
                       date: '',
-                      baseTime: '',
                       type: 'Rota Padrão'
                     });
-                    loadSchedules();
-                  } catch (err) {
-                    console.error('Erro ao criar agendamento:', err);
-                    alert('Erro ao criar agendamento. Verifique o console.');
+                    
+                    // Recarrega do Supabase
+                    await loadSchedules();
+                  } catch (err: any) {
+                    console.error('Erro ao salvar:', err);
+                    alert('Erro: ' + (err?.message || JSON.stringify(err)));
                   }
                 }}
                 className="w-full py-2 primary-gradient text-white text-[10px] font-black uppercase tracking-widest rounded-lg shadow-md hover:scale-[1.02] active:scale-95 transition-all"
               >
-                Validar e Agendar
+                {editingScheduleId ? 'Salvar Alterações' : 'Validar e Agendar'}
               </button>
             </div>
           </div>

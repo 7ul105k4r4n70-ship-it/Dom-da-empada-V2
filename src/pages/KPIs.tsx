@@ -108,35 +108,8 @@ export function KPIs() {
       </div>
 
       {activeTab === 'overview' ? (
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        <div className="lg:col-span-8 space-y-8">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="bg-white p-6 rounded-xl border-l-4 border-primary shadow-sm">
-              <p className="text-xs text-on-surface-variant font-medium mb-2">Entregas do Dia</p>
-              <div className="flex items-baseline gap-2">
-                <h3 className="text-4xl font-extrabold text-on-surface">1.248</h3>
-                <span className="text-xs font-bold text-green-600 flex items-center"><TrendingUp className="w-3 h-3" /> +12%</span>
-              </div>
-              <p className="text-[10px] text-on-surface-variant/60 mt-4 italic font-medium">Meta: 1.100 unidades</p>
-            </div>
-            <div className="bg-white p-6 rounded-xl border-l-4 border-secondary shadow-sm">
-              <p className="text-xs text-on-surface-variant font-medium mb-2">Média Semanal</p>
-              <div className="flex items-baseline gap-2">
-                <h3 className="text-4xl font-extrabold text-on-surface">8.420</h3>
-                <span className="text-xs font-bold text-primary flex items-center"><TrendingDown className="w-3 h-3" /> -3%</span>
-              </div>
-              <p className="text-[10px] text-on-surface-variant/60 mt-4 italic font-medium">Período: 01 a 07 de Out</p>
-            </div>
-            <div className="bg-white p-6 rounded-xl border-l-4 border-tertiary shadow-sm">
-              <p className="text-xs text-on-surface-variant font-medium mb-2">Volume Mensal (Proj.)</p>
-              <div className="flex items-baseline gap-2">
-                <h3 className="text-4xl font-extrabold text-on-surface">34.2k</h3>
-                <span className="text-xs font-bold text-on-surface-variant flex items-center"><Minus className="w-3 h-3" /> estável</span>
-              </div>
-              <p className="text-[10px] text-on-surface-variant/60 mt-4 italic font-medium">Baseado em Histórico 2023</p>
-            </div>
-          </div>
-
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8" key="overview-grid">
+        <div className="lg:col-span-8">
           <KPIFlowDistributionCard
             region={region}
             unit={unit}

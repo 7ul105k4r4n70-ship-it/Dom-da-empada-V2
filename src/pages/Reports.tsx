@@ -164,7 +164,12 @@ export function Reports() {
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const [expandedData, setExpandedData] = useState<Record<string, { products: Array<{ name: string; category: string; quantity: number; cost_price: number; image_url?: string }>; observations?: string; deliveryPhoto?: string }>>({});
   const [loadingExpandedId, setLoadingExpandedId] = useState<string | null>(null);
-  const [orderExtras, setOrderExtras] = useState<Record<string, number>>({});
+  const [orderExtras, setOrderExtras] = useState<Record<string, number>>(() => {
+    try {
+      const saved = localStorage.getItem('reports_order_extras');
+      return saved ? JSON.parse(saved) : {};
+    } catch { return {}; }
+  });
   const [calculatedTotals, setCalculatedTotals] = useState<Record<string, { units: number; value: number }>>({} as Record<string, { units: number; value: number }>);
   const [reportCategoryTotals, setReportCategoryTotals] = useState<Record<string, { boxes: number; units: number; value: number }>>({});
   
@@ -182,8 +187,28 @@ export function Reports() {
   const [filterEndDate, setFilterEndDate] = useState<string>('');
   const [filterPoint, setFilterPoint] = useState<string>('');
   const [filterMotorista, setFilterMotorista] = useState<string>('');
-  const [filterEntregaExtra, setFilterEntregaExtra] = useState<boolean>(false);
+  const [filterEntregaExtra, setFilterEntregaExtra] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('reports_filter_entrega_extra') === 'true';
+    } catch { return false; }
+  });
   const [deliveredOrderIds, setDeliveredOrderIds] = useState<Set<string>>(new Set());
+  const [ordersWithExtra, setOrdersWithExtra] = useState<Set<string>>(new Set());
+  const [extrasLoaded, setExtrasLoaded] = useState(false);
+
+  // Persistir filtro Entregas Extras no localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('reports_filter_entrega_extra', filterEntregaExtra ? 'true' : 'false');
+    } catch { /* ignore */ }
+  }, [filterEntregaExtra]);
+
+  // Persistir orderExtras no localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('reports_order_extras', JSON.stringify(orderExtras));
+    } catch { /* ignore */ }
+  }, [orderExtras]);
   
   // Produtos da categoria "Entrega extra" para dropdown
   const [entregaExtraProducts, setEntregaExtraProducts] = useState<Array<{ id: string; name: string; cost_price: string; sell_price: string }>>([]);
@@ -194,7 +219,7 @@ export function Reports() {
       try {
         console.log('[Reports] Buscando orders para região:', region);
         
-        let query = supabase.from('orders').select('id, short_id, point_name, pointName, region, units, status, type, driver_name, driverName, vehicle, created_at, timestamp, delivered_at, delivery_date, lat, lng');
+        let query = supabase.from('orders').select('*');
         
         if (region !== 'Todas') {
           query = query.or(`region.eq.${region},region.is.null`);
@@ -260,6 +285,46 @@ export function Reports() {
 
         setDeliveredOrderIds(dpIds);
         console.log('[Reports] Pedidos com delivery_products:', (deliveryProducts || []).length, '| com delivery_point_details:', (deliveryPointDetails || []).length, '| total único:', dpIds.size);
+
+        // Buscar produtos de entrega extra para identificar pedidos com entrega extra
+        // Um produto é de entrega extra se o nome contiver: entrega, domingo, feriado, natal, arapiraca, joão pessoa, caruaru, campina, fora de hor, extra
+        let extraOrderIds = new Set<string>();
+        try {
+          if (orderIds.length > 0) {
+            let allDeliveryProducts: any[] = [];
+            for (let i = 0; i < orderIds.length; i += CHUNK_SIZE) {
+              const chunk = orderIds.slice(i, i + CHUNK_SIZE);
+              const { data: dpChunk } = await supabase
+                .from('delivery_products')
+                .select('order_id, product_name')
+                .in('order_id', chunk);
+              if (dpChunk) allDeliveryProducts = allDeliveryProducts.concat(dpChunk);
+            }
+            // Verificar nomes dos produtos para identificar entregas extras
+            allDeliveryProducts.forEach((item: any) => {
+              const nm = (item.product_name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+              if (
+                nm.includes('entrega') ||
+                nm.includes('domingo') ||
+                nm.includes('feriado') ||
+                nm.includes('natal') ||
+                nm.includes('arapiraca') ||
+                nm.includes('joao pessoa') ||
+                nm.includes('caruaru') ||
+                nm.includes('campina') ||
+                nm.includes('fora de hor') ||
+                nm.includes('extra')
+              ) {
+                extraOrderIds.add(item.order_id);
+              }
+            });
+            console.log('[Reports] Pedidos com Entrega extra (delivery_products):', extraOrderIds.size, 'de', allDeliveryProducts.length, 'produtos');
+          }
+        } catch (e) {
+          console.log('[Reports] Erro ao buscar entregas extras:', e);
+        }
+        setOrdersWithExtra(extraOrderIds);
+        setExtrasLoaded(true);
 
         if (data && data.length > 0) {
           // Anexar fotos encontradas aos pedidos para exibição imediata nas miniaturas
@@ -384,9 +449,9 @@ export function Reports() {
       filtered = filtered.filter(o => (o.driverName || (o as any).driver_name) === filterMotorista);
     }
 
-    // Filtro por entregas extras (pedidos com tipo EXTRA DELIVERY)
+    // Filtro por entregas extras (pedidos com orderExtras definido)
     if (filterEntregaExtra) {
-      filtered = filtered.filter(o => o.type === 'EXTRA DELIVERY');
+      filtered = filtered.filter(o => orderExtras[o.id] && orderExtras[o.id] > 0);
     }
 
     // Ordenar por data de entrega (mais recentes primeiro)
@@ -397,7 +462,7 @@ export function Reports() {
     });
 
     return filtered;
-  }, [allOrders, filterStartDate, filterEndDate, filterPoint, filterMotorista, filterEntregaExtra, deliveredOrderIds]);
+  }, [allOrders, filterStartDate, filterEndDate, filterPoint, filterMotorista, filterEntregaExtra, deliveredOrderIds, orderExtras]);
 
 
   // Buscar produtos da categoria "Entrega extra" para o dropdown
@@ -1241,7 +1306,7 @@ export function Reports() {
     <div className="p-8 space-y-8 max-w-7xl mx-auto">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
         <div>
-          <h2 className="text-2xl font-extrabold text-on-surface tracking-tight mb-2">Relatório de Entregas [DEPLOY-TEST]</h2>
+          <h2 className="text-2xl font-extrabold text-on-surface tracking-tight mb-2">Relatório de Entregas</h2>
           <p className="text-on-surface-variant flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-green-500"></span>
             Região {region} · Apenas entregas confirmadas pelo motorista
@@ -1393,26 +1458,6 @@ export function Reports() {
         )}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="md:col-span-1 bg-white p-6 rounded-xl border-l-4 border-green-500 shadow-sm">
-          <p className="text-sm font-bold text-on-surface-variant uppercase tracking-wider mb-3">Volume Entregue</p>
-          <h3 className="text-5xl font-black text-green-600">
-            {Object.values(calculatedTotals as Record<string, { units: number; value: number }>).reduce((a, t) => a + t.units, 0).toLocaleString()}
-          </h3>
-          <p className="text-xs text-on-surface-variant mt-2">Unidades entregues · {region}</p>
-        </div>
-        <div className="bg-white p-6 rounded-xl border-l-4 border-secondary shadow-sm">
-          <p className="text-sm font-bold text-on-surface-variant uppercase tracking-wider mb-3">Entregas Confirmadas</p>
-          <h3 className="text-4xl font-black text-on-surface">{orders.length}</h3>
-          <p className="text-xs text-on-surface-variant mt-2">Com comprovante do motorista</p>
-        </div>
-        <div className="bg-white p-6 rounded-xl border-l-4 border-tertiary shadow-sm">
-          <p className="text-sm font-bold text-on-surface-variant uppercase tracking-wider mb-3">Aguardando Entrega</p>
-          <h3 className="text-4xl font-black text-on-surface">{allOrders.filter(o => !isDeliveredStatus(o.status) && !deliveredOrderIds.has(o.id) && o.status !== 'CANCELLED').length}</h3>
-          <p className="text-xs text-on-surface-variant mt-2">Pedidos em trânsito ou pendentes</p>
-        </div>
-      </div>
-
       {/* Separação por Tipo / Sabor (mesmo padrão de Preços e Royalties) */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
         {(
@@ -1461,8 +1506,23 @@ export function Reports() {
         ) : orders.length === 0 ? (
           <div className="p-12 text-center bg-white rounded-2xl border border-slate-100">
             <FileDown className="w-8 h-8 text-slate-200 mx-auto mb-3" />
-            <p className="text-on-surface-variant font-bold mb-1">Nenhuma entrega confirmada para {region}.</p>
-            <p className="text-xs text-on-surface-variant">As entregas aparecem aqui após o motorista confirmar no app.</p>
+            {filterEntregaExtra ? (
+              <>
+                <p className="text-on-surface-variant font-bold mb-1">Nenhuma entrega extra encontrada para {region}.</p>
+                <p className="text-xs text-on-surface-variant mb-3">Não há pedidos com produtos de entrega extra para os filtros selecionados.</p>
+                <button
+                  onClick={() => setFilterEntregaExtra(false)}
+                  className="text-xs font-bold text-primary border border-primary/20 px-4 py-2 rounded-lg hover:bg-primary/5 transition-colors"
+                >
+                  Desativar Filtro de Entregas Extras
+                </button>
+              </>
+            ) : (
+              <>
+                <p className="text-on-surface-variant font-bold mb-1">Nenhuma entrega confirmada para {region}.</p>
+                <p className="text-xs text-on-surface-variant">As entregas aparecem aqui após o motorista confirmar no app.</p>
+              </>
+            )}
           </div>
         ) : orders.map(order => {
           const isExpanded = expandedOrderId === order.id;
@@ -1486,24 +1546,7 @@ export function Reports() {
                     "w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 transition-all overflow-hidden border border-slate-100",
                     isExpanded ? "bg-primary text-white" : "bg-primary/5 text-primary"
                   )}>
-                    {(() => {
-                      const expandedPhoto = expandedData[order.id]?.deliveryPhoto;
-                      const photoUrl = expandedPhoto || order.deliveryPhoto || order.driverPhoto || (order as any).photo_url || (order as any).image_url;
-                      
-                      if (photoUrl && !photoUrl.toLowerCase().includes('.pdf')) {
-                        return (
-                          <img 
-                            src={normalizeStorageUrl(photoUrl)} 
-                            alt="Miniatura" 
-                            className="w-full h-full object-cover"
-                            onError={(e) => {
-                              (e.target as HTMLImageElement).style.display = 'none';
-                            }}
-                          />
-                        );
-                      }
-                      return isExpanded ? <ChevronUp className="w-4 h-4" /> : <FileDown className="w-4 h-4" />;
-                    })()}
+                    {isExpanded ? <ChevronUp className="w-4 h-4" /> : <FileDown className="w-4 h-4" />}
                   </div>
                   <div className="min-w-0">
                     <p className="font-bold text-on-surface text-sm truncate">#{order.short_id || order.id.substring(0, 8)}</p>
@@ -1592,36 +1635,9 @@ export function Reports() {
                         </div>
                       ) : (
                         <>
-                          {/* Foto da entrega + Observações */}
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          {/* Observações */}
+                          <div className="grid grid-cols-1 gap-4">
                             <div className="bg-white rounded-xl border border-slate-100 p-4">
-                              <p className="text-[10px] font-black text-on-surface-variant uppercase tracking-widest mb-2 flex items-center gap-1.5">
-                                <Camera className="w-3 h-3" /> Foto da Entrega
-                              </p>
-                              {(() => {
-                                console.log('[DEBUG UI] order:', order.id, 'deliveryPhoto:', data?.deliveryPhoto, 'order.deliveryPhoto:', order.deliveryPhoto);
-                                return data?.deliveryPhoto ? (
-                                  data.deliveryPhoto.toLowerCase().includes('.pdf') ? (
-                                    <div className="w-full h-40 bg-slate-50 rounded-lg flex flex-col items-center justify-center text-slate-500 cursor-pointer border border-slate-200 hover:border-primary transition-colors"
-                                      onClick={() => setPhotoOrder(order)}>
-                                      <FileDown className="w-8 h-8 mb-2 text-primary" />
-                                      <p className="text-[10px] font-bold">Ver PDF Anexado</p>
-                                    </div>
-                                  ) : (
-                                    <img src={normalizeStorageUrl(data.deliveryPhoto)} alt="Comprovante de entrega"
-                                      className="w-full h-40 object-cover rounded-lg cursor-pointer"
-                                      onClick={() => setPhotoOrder(order)}
-                                      onError={(e) => console.error('[DEBUG UI] Erro ao carregar imagem:', data.deliveryPhoto, e)} />
-                                  )
-                                ) : (
-                                  <div className="w-full h-40 bg-slate-50 rounded-lg flex flex-col items-center justify-center text-slate-300">
-                                    <Camera className="w-8 h-8 mb-2" />
-                                    <p className="text-[10px] font-bold">Sem foto</p>
-                                  </div>
-                                );
-                              })()}
-                            </div>
-                            <div className="md:col-span-2 bg-white rounded-xl border border-slate-100 p-4">
                               <p className="text-[10px] font-black text-on-surface-variant uppercase tracking-widest mb-2 flex items-center gap-1.5">
                                 <MessageSquare className="w-3 h-3" /> Observações
                               </p>

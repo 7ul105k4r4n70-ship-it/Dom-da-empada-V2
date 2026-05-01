@@ -182,37 +182,6 @@ export function Orders() {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="md:col-span-2 bg-primary-container p-4 rounded-xl relative overflow-hidden flex flex-col justify-between min-h-[130px] text-white">
-          <div className="relative z-10">
-            <p className="text-white/70 text-xs font-medium uppercase tracking-widest">Volume Diário Total</p>
-            <h3 className="text-4xl font-extrabold mt-1">
-              {orders.reduce((acc, curr) => acc + curr.units, 0).toLocaleString()} 
-              <span className="text-lg font-normal opacity-80 ml-2">Unidades</span>
-            </h3>
-          </div>
-          <div className="relative z-10 flex gap-4 mt-2">
-            <div className="flex items-center gap-1 text-white/90 text-[10px] font-bold">
-              Monitorando {orders.length} pedidos ativos
-            </div>
-          </div>
-        </div>
-        <div className="bg-white p-4 rounded-xl border-l-4 border-secondary flex flex-col justify-between shadow-sm min-h-[130px]">
-          <p className="text-on-surface-variant text-[10px] font-bold uppercase tracking-wider">Pedidos Concluídos</p>
-          <div>
-            <h4 className="text-2xl font-black">{orders.filter(o => ['COMPLETED', 'DELIVERED', 'Entregue'].includes(o.status)).length}</h4>
-            <p className="text-secondary font-semibold text-[10px] uppercase tracking-tighter">Hoje</p>
-          </div>
-        </div>
-        <div className="bg-white p-4 rounded-xl border-l-4 border-primary flex flex-col justify-between shadow-sm min-h-[130px]">
-          <p className="text-on-surface-variant text-[10px] font-bold uppercase tracking-wider">Em Processamento</p>
-          <div>
-            <h4 className="text-2xl font-black">{orders.filter(o => !['COMPLETED', 'DELIVERED', 'Entregue'].includes(o.status)).length}</h4>
-            <p className="text-primary font-semibold text-[10px] uppercase tracking-tighter">Aguardando Logística</p>
-          </div>
-        </div>
-      </div>
-
       <div className="bg-white rounded-xl shadow-sm overflow-hidden border border-slate-100">
         <div className="p-6 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="relative w-full md:w-96">

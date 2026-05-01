@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { TrendingUp, Truck, Clock, Package } from 'lucide-react';
+import { TrendingUp, Truck, Clock, Package, Calendar, Navigation, MapPin, FileText, User, AlertTriangle, Camera } from 'lucide-react';
 import { motion } from 'motion/react';
 import { cn } from '@/lib/utils';
 import { supabase, subscribeToTable, seedInitialData } from '@/supabase';
 import { type Order, type Region } from '@/types';
+import { OrderDetailsModal } from '@/components/OrderDetailsModal';
 
 export function Dashboard() {
   const [orders, setOrders] = useState<Order[]>([]);
@@ -12,6 +13,20 @@ export function Dashboard() {
   const [user, setUser] = useState<any>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [driverNames, setDriverNames] = useState<Record<string, string>>({});
+  const [todaySchedules, setTodaySchedules] = useState<Array<{
+    id: string;
+    title: string;
+    location: string;
+    time: string;
+    driver: string;
+    vehicle: string;
+    stops_count?: number;
+    order_ids?: string[];
+    points?: Array<{ id: string; name: string; region: string }>;
+  }>>([]);
+
+  // Estado para modal de detalhes do pedido
+  const [selectedOrderForModal, setSelectedOrderForModal] = useState<Order | null>(null);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -27,6 +42,95 @@ export function Dashboard() {
       }
     });
   }, []);
+
+  // Buscar agendamentos futuros (hoje em diante)
+  const [linkedOrders, setLinkedOrders] = useState<Record<string, Order[]>>({});
+  const [driverDaySchedules, setDriverDaySchedules] = useState<Record<string, typeof todaySchedules>>({});
+  
+  useEffect(() => {
+    const fetchSchedules = async () => {
+      try {
+        const todayStr = new Date().toISOString().split('T')[0];
+        const { data, error } = await supabase
+          .from('schedules')
+          .select('*')
+          .gte('scheduled_date', todayStr)
+          .order('scheduled_date', { ascending: true })
+          .order('scheduled_time', { ascending: true });
+        
+        if (!error && data) {
+          const schedules = data.map((s: any) => {
+            let parsedPoints: Array<{ id: string; name: string; region: string }> | undefined;
+            if (s.points_json) {
+              try { parsedPoints = JSON.parse(s.points_json); } catch { /* ignore */ }
+            }
+            // Fallback: extrair pontos da location separada por →
+            if (!parsedPoints && s.location && s.location.includes('→')) {
+              const names = s.location.split('→').map((n: string) => n.trim()).filter(Boolean);
+              parsedPoints = names.map((name: string, idx: number) => ({
+                id: `stop-${idx}`,
+                name,
+                region: s.region || ''
+              }));
+            }
+            return {
+              id: s.id,
+              title: s.title || 'Rota',
+              location: s.location || '',
+              time: s.scheduled_time || '',
+              driver: s.driver_name || '',
+              vehicle: s.vehicle_name || '',
+              scheduled_date: s.scheduled_date,
+              stops_count: s.stops_count || 1,
+              order_ids: s.order_ids || [],
+              points: parsedPoints,
+            };
+          });
+          setTodaySchedules(schedules);
+          
+          // Agrupar por motorista + data
+          const grouped: Record<string, typeof schedules> = {};
+          schedules.forEach((s: any) => {
+            const key = `${s.driver || 'Sem motorista'}|${s.scheduled_date}`;
+            if (!grouped[key]) grouped[key] = [];
+            grouped[key].push(s);
+          });
+          setDriverDaySchedules(grouped);
+          
+          // Buscar pedidos vinculados: busca TODOS os pedidos recentes e faz match pelo nome do ponto
+          const { data: allOrdersData } = await supabase
+            .from('orders')
+            .select('*')
+            .gte('created_at', new Date(Date.now() - 7 * 86400000).toISOString())
+            .limit(500);
+          
+          if (allOrdersData && allOrdersData.length > 0) {
+            const ordersMap: Record<string, Order[]> = {};
+            schedules.forEach((s: any) => {
+              const pointNames = (s.points || []).map((p: any) => (p.name || '').toLowerCase().trim()).filter(Boolean);
+              ordersMap[s.id] = allOrdersData.filter((o: any) => {
+                // Por order_ids
+                if ((s.order_ids || []).includes(o.id)) return true;
+                // Ou por nome do ponto (match parcial)
+                const orderPoint = (o.pointName || o.point_name || '').toLowerCase().trim();
+                return pointNames.some((pn: string) => {
+                  if (!pn || !orderPoint) return false;
+                  return orderPoint.includes(pn) || pn.includes(orderPoint);
+                });
+              });
+            });
+            console.log('Dashboard - pedidos encontrados:', ordersMap);
+            setLinkedOrders(ordersMap);
+          }
+        }
+      } catch (e) {
+        console.error('Erro ao buscar agendamentos:', e);
+      }
+    };
+    fetchSchedules();
+    const interval = setInterval(fetchSchedules, 300000);
+    return () => clearInterval(interval);
+  }, [region]);
 
   const getTimeStatus = () => {
     const now = currentTime;
@@ -90,6 +194,18 @@ export function Dashboard() {
     return () => { cancelled = true; unsub(); };
   }, [region]);
 
+  // Helper: verifica se uma data é hoje (timezone America/Recife)
+  const isToday = (dateStr: string | undefined) => {
+    if (!dateStr) return false;
+    const d = new Date(dateStr);
+    const todayStr = new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Recife', day: '2-digit', month: '2-digit', year: 'numeric' });
+    const orderStr = d.toLocaleDateString('pt-BR', { timeZone: 'America/Recife', day: '2-digit', month: '2-digit', year: 'numeric' });
+    return orderStr === todayStr;
+  };
+
+  // Pedidos do dia atual (considerando created_at ou delivered_at)
+  const todayOrders = orders.filter(o => isToday(o.created_at) || isToday(o.delivered_at));
+
   // Agregados reais
   const totalUnits = orders.reduce((acc, curr) => acc + (curr.units || 0), 0);
   const completedOrders = orders.filter(o => ['COMPLETED', 'DELIVERED', 'Entregue'].includes(o.status)).length;
@@ -141,82 +257,9 @@ export function Dashboard() {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-white p-4 rounded-xl border-l-4 border-primary shadow-sm"
-        >
-          <div className="flex justify-between items-start mb-2">
-            <span className="text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant">Entregas do Dia</span>
-            <div className="bg-primary/10 text-primary p-1.5 rounded-lg">
-              <Truck className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="flex flex-col">
-            <span className="text-4xl font-black text-on-surface mb-0.5">{completedOrders}</span>
-            <div className="flex items-center gap-1 text-green-600 text-[11px] font-bold">
-              <TrendingUp className="w-3 h-3" />
-              <span>Unidades: {totalUnits.toLocaleString('pt-BR')}</span>
-            </div>
-          </div>
-        </motion.div>
-
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="bg-white p-4 rounded-xl border-l-4 border-secondary shadow-sm"
-        >
-          <div className="flex justify-between items-start mb-2">
-            <span className="text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant">Pedidos Pendentes</span>
-            <div className="bg-secondary/10 text-secondary p-1.5 rounded-lg">
-              <Package className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="flex flex-col">
-            <span className="text-4xl font-black text-on-surface mb-0.5">{pendingOrders}</span>
-            <div className="flex items-center gap-1 text-red-600 text-[11px] font-bold">
-              <span>{urgentOrders} urgentes</span>
-            </div>
-          </div>
-        </motion.div>
-
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-          className="bg-white p-4 rounded-xl border-l-4 border-tertiary shadow-sm"
-        >
-          <div className="flex justify-between items-center mb-3">
-            <span className="text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant">Estoque Crítico</span>
-            <div className="flex bg-slate-100 p-1 rounded-lg text-[9px]">
-              <button className="bg-white px-2 py-0.5 rounded shadow-sm font-bold">UNID</button>
-              <button className="px-2 py-0.5 text-on-surface-variant opacity-60">CAIXAS</button>
-            </div>
-          </div>
-          <div className="space-y-2.5">
-            <div className="flex justify-between items-center text-xs">
-              <span className="text-on-surface-variant">Frango Tradicional</span>
-              <span className="font-bold">14.200</span>
-            </div>
-            <div className="w-full bg-slate-100 h-1 rounded-full overflow-hidden">
-              <div className="bg-primary h-full w-[85%] rounded-full"></div>
-            </div>
-            <div className="flex justify-between items-center text-xs">
-              <span className="text-on-surface-variant">Carne de Sol</span>
-              <span className="font-bold">9.420</span>
-            </div>
-            <div className="w-full bg-slate-100 h-1 rounded-full overflow-hidden">
-              <div className="bg-secondary h-full w-[60%] rounded-full"></div>
-            </div>
-          </div>
-        </motion.div>
-      </div>
-
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Cards de Status de Entregas */}
-        <div className="lg:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="lg:col-span-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           {/* Entregas do Dia */}
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col justify-between min-h-[180px]">
             <div className="flex items-center justify-between">
@@ -225,9 +268,19 @@ export function Dashboard() {
                 <Package className="w-4 h-4 text-primary" />
               </div>
             </div>
-            <div>
-              <p className="text-3xl font-black text-on-surface">{orders.length}</p>
-              <p className="text-xs text-on-surface-variant">pedidos programados</p>
+            <div className="space-y-3">
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-on-surface-variant">Feitas</span>
+                <span className="text-lg font-black text-secondary">{todayOrders.filter(o => ['COMPLETED', 'DELIVERED', 'Entregue'].includes(o.status)).length}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-on-surface-variant">Pendentes</span>
+                <span className="text-lg font-black text-amber-500">{todayOrders.filter(o => !['COMPLETED', 'DELIVERED', 'Entregue', 'CANCELLED', 'Cancelado'].includes(o.status) && !!(o.driver_name || (o as any).driverName || (o as any).driver_id)).length}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-on-surface-variant">Sem Motorista</span>
+                <span className="text-lg font-black text-red-500">{todayOrders.filter(o => !['COMPLETED', 'DELIVERED', 'Entregue', 'CANCELLED', 'Cancelado'].includes(o.status) && !(o.driver_name || (o as any).driverName || (o as any).driver_id)).length}</span>
+              </div>
             </div>
           </div>
 
@@ -251,33 +304,137 @@ export function Dashboard() {
             </div>
           </div>
 
-          {/* Entregas Pendentes */}
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col justify-between min-h-[180px]">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-on-surface-variant uppercase tracking-wider">Pendentes para Segunda viagem</span>
-              <div className="w-8 h-8 bg-amber-100 rounded-lg flex items-center justify-center">
-                <Clock className="w-4 h-4 text-amber-600" />
+          {/* Viagens Agendadas - Cards por Motorista-Dia */}
+          {Object.entries(driverDaySchedules).length > 0 ? (
+            Object.entries(driverDaySchedules).map(([key, daySchedules]) => {
+              const [driverName, dateStr] = key.split('|');
+              const displayDate = new Date(dateStr + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+              const isToday = dateStr === new Date().toISOString().split('T')[0];
+              
+              return (
+                <div key={key} className="bg-white rounded-2xl shadow-md border border-slate-200 flex flex-col overflow-hidden">
+                  {/* Header bordô com infos do motorista */}
+                  <div className="bg-[#7B2D3B] p-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="w-7 h-7 bg-white/20 rounded-lg flex items-center justify-center shrink-0">
+                          <Calendar className="w-3.5 h-3.5 text-white" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-black text-white truncate">{driverName}</p>
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-bold bg-white/20 text-white px-2 py-0.5 rounded-full shrink-0 ml-2">
+                        {isToday ? 'Hoje' : displayDate}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3 mt-1.5 text-[10px] text-white/80">
+                      <span className="flex items-center gap-1">
+                        <Truck className="w-3 h-3" />
+                        {daySchedules[0]?.vehicle || 'Sem veículo'}
+                      </span>
+                      <span>· {daySchedules.length} viagem{daySchedules.length > 1 ? 'ns' : ''}</span>
+                    </div>
+                  </div>
+                  
+                  {/* Corpo branco com as viagens */}
+                  <div className="p-3 flex-1">
+                    <div className="space-y-2 flex-1 overflow-y-auto max-h-[180px] pr-1">
+                      {daySchedules.map(schedule => {
+                        const orders = linkedOrders[schedule.id] || [];
+                        return (
+                          <div key={schedule.id} className="bg-slate-50 rounded-xl p-2.5 border border-slate-100">
+                            <div className="flex items-start justify-between mb-1.5">
+                              <div className="min-w-0 flex-1">
+                                <p className="text-[11px] font-black text-slate-800 truncate">{schedule.title}</p>
+                              </div>
+                            </div>
+                            
+                            {/* Pontos com PDFs */}
+                            {schedule.points && schedule.points.length > 0 && (
+                              <div className="space-y-1 mt-1.5 pt-1.5 border-t border-slate-200">
+                                {schedule.points.map((point, idx) => {
+                                  const pointOrder = orders.find((o: Order) => 
+                                    o.pointName === point.name || o.point_name === point.name
+                                  );
+                                  return (
+                                    <div key={idx} className="flex items-center justify-between gap-2">
+                                      <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                        <span className="w-4 h-4 rounded-full bg-[#7B2D3B]/10 text-[#7B2D3B] flex items-center justify-center text-[8px] font-bold shrink-0">
+                                          {idx + 1}
+                                        </span>
+                                        <div className="min-w-0">
+                                          <p className="text-[10px] font-bold text-slate-700 truncate">{point.name}</p>
+                                          <p className="text-[9px] text-slate-500">{point.region}</p>
+                                        </div>
+                                      </div>
+                                      {pointOrder && (
+                                        <button
+                                          onClick={() => setSelectedOrderForModal(pointOrder)}
+                                          className="p-1 hover:bg-[#7B2D3B]/10 rounded-full transition-colors shrink-0"
+                                          title="Gerar PDF do pedido"
+                                        >
+                                          <Camera className="w-3.5 h-3.5 text-[#7B2D3B]" />
+                                        </button>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                            
+                            {/* Fallback: pedidos sem points */}
+                            {(!schedule.points || schedule.points.length === 0) && orders.length > 0 && (
+                              <div className="space-y-1 mt-1.5 pt-1.5 border-t border-slate-200">
+                                {orders.map((order) => (
+                                  <div key={order.id} className="flex items-center justify-between gap-2">
+                                    <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                      <MapPin className="w-2.5 h-2.5 text-[#7B2D3B] shrink-0" />
+                                      <p className="text-[10px] text-slate-700 truncate">
+                                        {order.pointName || order.point_name || 'Ponto desconhecido'}
+                                      </p>
+                                    </div>
+                                    <button
+                                      onClick={() => setSelectedOrderForModal(order)}
+                                      className="p-1 hover:bg-[#7B2D3B]/10 rounded-full transition-colors shrink-0"
+                                      title="Gerar PDF do pedido"
+                                    >
+                                      <Camera className="w-3.5 h-3.5 text-[#7B2D3B]" />
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+            <div className="bg-white rounded-2xl shadow-md border border-slate-200 flex flex-col overflow-hidden min-h-[180px]">
+              <div className="bg-[#7B2D3B] p-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 bg-white/20 rounded-lg flex items-center justify-center shrink-0">
+                    <Calendar className="w-3.5 h-3.5 text-white" />
+                  </div>
+                  <p className="text-xs font-black text-white">Viagens Agendadas</p>
+                </div>
+              </div>
+              <div className="flex-1 flex flex-col items-center justify-center p-5">
+                <AlertTriangle className="w-6 h-6 text-[#7B2D3B]/30 mb-2" />
+                <p className="text-xs text-slate-400 font-medium">Nenhuma viagem agendada.</p>
               </div>
             </div>
-            <div className="space-y-3">
-              <div className="flex justify-between items-center">
-                <span className="text-xs text-on-surface-variant">Entregues</span>
-                <span className="text-lg font-black text-secondary">0</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-xs text-on-surface-variant">Pendentes</span>
-                <span className="text-lg font-black text-amber-600">
-                  {orders.filter(o => !['COMPLETED', 'DELIVERED', 'Entregue', 'IN_PROGRESS', 'IN PROGRESS', 'ACCEPTED'].includes(o.status)).length}
-                </span>
-              </div>
-            </div>
-          </div>
+          )}
         </div>
 
-        <div className="space-y-6">
+        <div className="space-y-6 w-full lg:col-span-3">
           <h4 className="text-sm font-bold uppercase tracking-widest text-on-surface-variant px-2">Rota dos Motoristas</h4>
           
-          <div className="grid grid-cols-1 gap-4 overflow-y-auto max-h-[800px] pr-2">
+          <div className="flex flex-wrap gap-4 overflow-y-auto max-h-[800px] pr-2 w-full">
             {/* Motoristas: todos os pedidos deles. Sem Motorista: apenas pedidos de hoje */}
             {Object.entries(
               orders.reduce<Record<string, Order[]>>((acc, order) => {
@@ -315,7 +472,7 @@ export function Dashboard() {
                   return acc;
                 }, {})
               ).map(([driver, driverOrders]: [string, Order[]]) => (
-                <div key={driver} className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 space-y-4 hover:shadow-md transition-shadow">
+                <div key={driver} className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 space-y-4 hover:shadow-md transition-shadow w-[340px]">
                   <div className="flex items-center gap-3 border-b border-slate-50 pb-3">
                     <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center">
                       <Truck className="w-5 h-5 text-primary" />
@@ -362,6 +519,14 @@ export function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* Modal de detalhes do pedido - abre ao clicar no ícone de câmera */}
+      {selectedOrderForModal && (
+        <OrderDetailsModal
+          order={selectedOrderForModal}
+          onClose={() => setSelectedOrderForModal(null)}
+        />
+      )}
     </div>
   );
 }
