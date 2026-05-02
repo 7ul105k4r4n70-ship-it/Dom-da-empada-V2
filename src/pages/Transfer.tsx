@@ -18,11 +18,13 @@ import {
   Printer,
   Calendar,
   FileText,
-  Filter
+  Filter,
+  Pencil,
+  Trash2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/lib/utils';
-import { supabase, subscribeToTable, insertRow } from '@/supabase';
+import { supabase, subscribeToTable, insertRow, updateRow, deleteRow } from '@/supabase';
 import { type Region } from '@/types';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -133,6 +135,7 @@ export function Transfer() {
   // Estado para os itens sendo transferidos (quantidades por ID de produto)
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [editingTransferId, setEditingTransferId] = useState<string | null>(null);
 
   // Região atual para exibir os produtos (ex: Recife enviando para Salvador)
   const [originRegion, setOriginRegion] = useState<Region>('Recife');
@@ -146,8 +149,8 @@ export function Transfer() {
       setLoadingProducts(false);
     }, 'sort_order', true);
 
-    // Busca histórico de transferências da região de origem
-    const unsubTransfers = subscribeToTable('transfers', { origin: originRegion }, (data) => {
+    // Busca histórico de transferências que CHEGAM na região selecionada (destination)
+    const unsubTransfers = subscribeToTable('transfers', { destination: originRegion }, (data) => {
       setTransfers((data as any[]).sort((a,b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()));
     });
 
@@ -221,6 +224,34 @@ export function Transfer() {
     if (order >= 20 && order <= 23) return 'PASTÉIS';
     if (order >= 24 && order <= 29) return 'EMBALAGENS';
     return 'OUTROS';
+  };
+
+  const handleEditTransfer = (t: TransferRecord) => {
+    // Preenche o formulário com os itens da transferência para edição
+    const newQuantities: Record<string, number> = {};
+    t.items.forEach(item => {
+      newQuantities[item.productId] = item.quantity;
+    });
+    setQuantities(newQuantities);
+    setOriginRegion(t.origin);
+    setEditingTransferId(t.id);
+    // Scroll para o formulário
+    document.getElementById('formulario-transferencia')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
+
+  const handleCancelEdit = () => {
+    setEditingTransferId(null);
+    setQuantities({});
+  };
+
+  const handleDeleteTransfer = async (t: TransferRecord) => {
+    if (!confirm(`Excluir transferência ${t.origin} → ${t.destination} de ${new Date(t.created_at).toLocaleDateString('pt-BR')}?`)) return;
+    try {
+      await deleteRow('transfers', t.id);
+      setTransfers(prev => prev.filter(tr => tr.id !== t.id));
+    } catch (error: any) {
+      alert('Erro ao excluir: ' + (error?.message || 'Erro desconhecido'));
+    }
   };
 
   const handleExportTransferPDF = async (t: TransferRecord) => {
@@ -430,28 +461,51 @@ export function Transfer() {
     });
 
     try {
-      console.log('[Transfer] Enviando dados:', {
-        origin: originRegion,
-        destination: destinationRegion,
-        items,
-        total_items: totalItemsCount,
-        status: 'Concluído'
-      });
-      
-      await insertRow('transfers', {
-        origin: originRegion,
-        destination: destinationRegion,
-        items,
-        total_items: totalItemsCount,
-        status: 'Concluído'
-      });
-      setQuantities({});
-      alert('Transferência registrada com sucesso!');
+      if (editingTransferId) {
+        // MODO EDIÇÃO: atualizar transferência existente
+        await updateRow('transfers', editingTransferId, {
+          origin: originRegion,
+          destination: destinationRegion,
+          items,
+          total_items: totalItemsCount,
+          status: 'Concluído'
+        });
+        // Atualiza o card no estado local
+        setTransfers(prev => prev.map(t => 
+          t.id === editingTransferId 
+            ? { ...t, origin: originRegion, destination: destinationRegion, items, total_items: totalItemsCount } as TransferRecord
+            : t
+        ));
+        setEditingTransferId(null);
+        setQuantities({});
+        alert('Transferência atualizada com sucesso!');
+      } else {
+        // MODO NOVO: criar transferência
+        console.log('[Transfer] Enviando dados:', {
+          origin: originRegion,
+          destination: destinationRegion,
+          items,
+          total_items: totalItemsCount,
+          status: 'Concluído'
+        });
+        
+        const newTransfer = await insertRow('transfers', {
+          origin: originRegion,
+          destination: destinationRegion,
+          items,
+          total_items: totalItemsCount,
+          status: 'Concluído'
+        });
+        // Adiciona imediatamente ao estado local
+        setTransfers(prev => [newTransfer as TransferRecord, ...prev]);
+        setQuantities({});
+        alert('Transferência registrada com sucesso!');
+      }
     } catch (error: any) {
       console.error('[Transfer] Erro detalhado:', error);
       console.error('[Transfer] Mensagem:', error?.message);
       console.error('[Transfer] Detalhes:', error?.details);
-      alert('Erro ao registrar transferência: ' + (error?.message || 'Erro desconhecido'));
+      alert('Erro ao ' + (editingTransferId ? 'atualizar' : 'registrar') + ' transferência: ' + (error?.message || 'Erro desconhecido'));
     } finally {
       setIsSubmitting(false);
     }
@@ -602,13 +656,23 @@ export function Transfer() {
                     <p className="text-lg font-black">{totalItemsCount} <span className="text-sm font-bold opacity-40">Itens Selecionados</span></p>
                   </div>
                </div>
-               <button 
-                  disabled={totalItemsCount === 0 || isSubmitting}
-                  onClick={handleRegisterTransfer}
-                  className="px-10 py-5 primary-gradient text-white font-black rounded-3xl shadow-xl shadow-primary/25 hover:brightness-110 active:scale-95 transition-all disabled:opacity-30 disabled:grayscale"
-                >
-                  {isSubmitting ? <Loader2 className="w-6 h-6 animate-spin" /> : 'REGISTRAR TRANSFERÊNCIA'}
-               </button>
+               <div className="flex items-center gap-3">
+                  {editingTransferId && (
+                    <button 
+                      onClick={handleCancelEdit}
+                      className="px-6 py-5 bg-slate-100 text-slate-600 font-black rounded-3xl hover:bg-slate-200 transition-all active:scale-95"
+                    >
+                      CANCELAR EDIÇÃO
+                    </button>
+                  )}
+                  <button 
+                    disabled={totalItemsCount === 0 || isSubmitting}
+                    onClick={handleRegisterTransfer}
+                    className="px-10 py-5 primary-gradient text-white font-black rounded-3xl shadow-xl shadow-primary/25 hover:brightness-110 active:scale-95 transition-all disabled:opacity-30 disabled:grayscale"
+                  >
+                    {isSubmitting ? <Loader2 className="w-6 h-6 animate-spin" /> : editingTransferId ? 'ATUALIZAR TRANSFERÊNCIA' : 'REGISTRAR TRANSFERÊNCIA'}
+                 </button>
+               </div>
             </div>
           </div>
         </div>
@@ -698,6 +762,20 @@ export function Transfer() {
                            ))}
                         </div>
                         <button 
+                          onClick={() => handleEditTransfer(t)}
+                          className="p-2.5 bg-white border border-slate-200 rounded-xl text-amber-600 hover:bg-amber-500 hover:text-white transition-all shadow-sm"
+                          title="Editar Transferência"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        <button 
+                          onClick={() => handleDeleteTransfer(t)}
+                          className="p-2.5 bg-white border border-slate-200 rounded-xl text-red-600 hover:bg-red-500 hover:text-white transition-all shadow-sm"
+                          title="Excluir Transferência"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                        <button 
                           onClick={() => handleExportTransferPDF(t)}
                           className="p-2.5 bg-white border border-slate-200 rounded-xl text-primary hover:bg-primary hover:text-white transition-all shadow-sm"
                           title="Imprimir Relatório"
@@ -715,34 +793,6 @@ export function Transfer() {
               </button>
            </div>
 
-           <div className="bg-slate-900 rounded-[32px] p-8 text-white relative overflow-hidden group">
-              <div className="relative z-10">
-                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/40 mb-2">Fluxo Logístico (Mês)</p>
-                <h4 className="text-3xl font-black mb-6">48.2 <span className="text-sm font-bold opacity-40">Ton. Movimentadas</span></h4>
-                
-                <div className="space-y-4">
-                  <div className="space-y-1.5">
-                    <div className="flex justify-between text-[10px] font-black uppercase tracking-widest">
-                      <span className="text-white/60">Recife - Salvador</span>
-                      <span className="text-primary-container">82%</span>
-                    </div>
-                    <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
-                      <motion.div initial={{ width: 0 }} animate={{ width: '82%' }} className="h-full bg-primary" />
-                    </div>
-                  </div>
-                  <div className="space-y-1.5">
-                    <div className="flex justify-between text-[10px] font-black uppercase tracking-widest">
-                      <span className="text-white/60">Salvador - Recife</span>
-                      <span className="text-secondary">45%</span>
-                    </div>
-                    <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
-                      <motion.div initial={{ width: 0 }} animate={{ width: '45%' }} className="h-full bg-secondary" />
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div className="absolute -bottom-10 -right-10 w-40 h-40 bg-primary/20 rounded-full blur-[80px] group-hover:bg-primary/30 transition-all duration-700" />
-           </div>
         </div>
       </div>
     </div>

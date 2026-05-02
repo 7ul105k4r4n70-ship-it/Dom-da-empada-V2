@@ -134,3 +134,39 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+
+# Build output
+dist/
+dist-ssr/
+build/
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Test files
+/test-results/
+/playwright-report/
+/playwright/.cache/
+
+# Database dumps
+*.db
+*.sqlite
+*.sqlite3
+
+# Assets
+*.pdf
+*.zip
+*.tar.gz
+
+# Old backups
+/backup/
+/backups/
+/old/

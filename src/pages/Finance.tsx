@@ -784,17 +784,6 @@ export function Finance() {
             </div>
           </div>
 
-          <div className="bg-slate-900 rounded-xl p-6 text-white shadow-lg overflow-hidden relative group">
-            <div className="relative z-10">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-white/60 mb-1">Média de Royalties (Trimestre)</p>
-              <h4 className="text-2xl font-black mb-4">R$ 12.450 / mês</h4>
-              <div className="flex items-center gap-2 text-xs font-bold text-green-400">
-                <TrendingUp className="w-4 h-4" />
-                <span>+4.2% em relação ao período anterior</span>
-              </div>
-            </div>
-            <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full -mr-16 -mt-16 blur-2xl group-hover:bg-white/10 transition-all"></div>
-          </div>
         </section>
       </div>
       {/* Modal Adicionar Produto */}
