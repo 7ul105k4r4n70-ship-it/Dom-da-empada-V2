@@ -15,35 +15,6 @@ export function Login({ onLogin }: LoginProps) {
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [cloudLogo, setCloudLogo] = useState('/logocloud.png');
-
-  useEffect(() => {
-    // Em dev, nao processar canvas para nao bloquear a UI
-    if (!import.meta.env.PROD && window.location.hostname === 'localhost') {
-      setCloudLogo('/logocloud.png');
-      return;
-    }
-    
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      ctx.drawImage(img, 0, 0);
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const d = imageData.data;
-      for (let i = 0; i < d.length; i += 4) {
-        if (d[i] > 235 && d[i + 1] > 235 && d[i + 2] > 235) {
-          d[i + 3] = 0;
-        }
-      }
-      ctx.putImageData(imageData, 0, 0);
-      setCloudLogo(canvas.toDataURL('image/png'));
-    };
-    img.src = '/logocloud.png';
-  }, []);
 
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -245,12 +216,11 @@ export function Login({ onLogin }: LoginProps) {
         </div>
 
         {/* Marca d'água */}
-        <div className="mt-8 flex justify-center pb-4 select-none">
-          <img
-            src={cloudLogo}
-            alt="SK4R4N70 Cloud"
-            className="h-24 w-auto opacity-60"
-          />
+        <div className="mt-8 flex justify-center pb-4 select-none opacity-50">
+          <svg width="160" height="40" viewBox="0 0 160 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <text x="80" y="16" textAnchor="middle" fontFamily="monospace" fontSize="11" fontWeight="700" fill="#64748b" letterSpacing="3">SK4R4N70</text>
+            <text x="80" y="32" textAnchor="middle" fontFamily="monospace" fontSize="9" fontWeight="400" fill="#94a3b8" letterSpacing="5">CLOUD</text>
+          </svg>
         </div>
       </motion.div>
     </div>
