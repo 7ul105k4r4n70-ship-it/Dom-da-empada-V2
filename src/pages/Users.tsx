@@ -145,6 +145,11 @@ export function Users() {
       setFormError('A senha deve ter no mínimo 6 caracteres.');
       return;
     }
+    // Validação: nome de usuário não pode ter espaços (usado como login)
+    if (form.name.includes(' ')) {
+      setFormError('O nome de usuário não pode conter espaços. Use um nome único sem espaços para o login.');
+      return;
+    }
 
     setSaving(true);
     setFormError(null);
@@ -170,44 +175,20 @@ export function Users() {
         alert('✅ Usuário atualizado com sucesso!');
       } else {
         // ── Criar novo usuário ───────────────────────────────────
-        // 1. Verificar se já existe na app_users para evitar duplicata
+        // Login é por nome de usuário (não email) - não usa Supabase Auth
+        // 1. Verificar se já existe na app_users pelo nome
         const { data: existing } = await supabase
           .from('app_users')
           .select('id')
-          .eq('email', form.email)
+          .eq('name', form.name)
           .maybeSingle();
 
         if (existing) {
-          setFormError('Este e-mail já está cadastrado. Use "Editar" para alterar os dados.');
+          setFormError('Este nome de usuário já está cadastrado. Use outro nome.');
           return;
         }
 
-        // 2. Criar no Supabase Auth (cria conta de login)
-        let authUserId: string | null = null;
-        try {
-          const authData = await signUpWithEmail(form.email, form.password);
-          authUserId = authData?.user?.id ?? null;
-        } catch (authErr: any) {
-          // Se já existe no Auth mas não em app_users, continua sem auth_uid
-          if (
-            authErr.message?.includes('already registered') ||
-            authErr.message?.includes('already exists') ||
-            authErr.code === 'user_already_exists'
-          ) {
-            console.warn('[Users] Auth já existe, tentando reaproveitá-lo via RPC...');
-            // Tentar buscar o auth_uid via email no banco
-            try {
-              const { data: rpcData } = await supabase.rpc('get_auth_uid_by_email', {
-                user_email: form.email,
-              });
-              authUserId = rpcData ?? null;
-            } catch {}
-          } else {
-            throw authErr;
-          }
-        }
-
-        // 3. Inserir perfil em app_users
+        // 2. Inserir perfil em app_users (sem Supabase Auth)
         const { error: insertErr } = await supabase.from('app_users').insert({
           name: form.name,
           email: form.email,
@@ -217,15 +198,9 @@ export function Users() {
           phone: form.phone || null,
           vehicle: form.vehicle || null,
           status: 'Ativo',
-          auth_uid: authUserId,
         });
 
         if (insertErr) {
-          // Duplicate key no banco — e-mail já existe
-          if (insertErr.code === '23505') {
-            setFormError('Este e-mail já está cadastrado no sistema.');
-            return;
-          }
           throw insertErr;
         }
 
@@ -603,16 +578,12 @@ export function Users() {
                     />
                   </div>
                   <div className="col-span-2 space-y-1">
-                    <label className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider">E-mail (login no app) *</label>
+                    <label className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider">E-mail (apenas informativo) *</label>
                     <input
                       type="email"
-                      disabled={!!form.id}
                       value={form.email}
                       onChange={(e) => setForm(f => ({ ...f, email: e.target.value }))}
-                      className={cn(
-                        "w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-primary/30",
-                        form.id && "opacity-60 cursor-not-allowed"
-                      )}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-primary/30"
                       placeholder="motorista@domempada.com"
                     />
                   </div>

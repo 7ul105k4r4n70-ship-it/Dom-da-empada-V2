@@ -171,22 +171,8 @@ interface Product {
   region: string;
 }
 
-const FRANCHISES_BY_REGION: Record<Region, Array<{name:string;pct:string;amount:string;status:string;color:string}>> = {
-  Recife: [
-    { name: 'Loja Boa Viagem', pct: '5%', amount: '4.215,00', status: 'Processado', color: 'bg-green-100 text-green-700' },
-    { name: 'Unidade Olinda', pct: '4.5%', amount: '2.105,20', status: 'Processado', color: 'bg-green-100 text-green-700' },
-    { name: 'Shopping Tacaruna', pct: '5.5%', amount: '3.480,00', status: 'Aguardando', color: 'bg-yellow-100 text-yellow-700' },
-  ],
-  Salvador: [
-    { name: 'Shopping Barra', pct: '6%', amount: '5.120,00', status: 'Processado', color: 'bg-green-100 text-green-700' },
-    { name: 'Pelourinho Loja', pct: '6.5%', amount: '5.842,50', status: 'Aguardando', color: 'bg-yellow-100 text-yellow-700' },
-    { name: 'Pituba Hub', pct: '5%', amount: '3.290,00', status: 'Processado', color: 'bg-green-100 text-green-700' },
-  ],
-};
-
 export function Finance() {
   const [region, setRegion] = useState<Region>('Recife');
-  const franchises = FRANCHISES_BY_REGION[region];
   const [products, setProducts] = useState<Product[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(true);
   const [activeCategory, setActiveCategory] = useState<ProductCategory | 'Todos'>('Todos');
@@ -203,10 +189,29 @@ export function Finance() {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [royaltyPercentage, setRoyaltyPercentage] = useState('5');
-  const [calculatedRoyalties, setCalculatedRoyalties] = useState<Array<{name: string, totalOrders: number, royaltyAmount: number}>>([]);
+  const [calculatedRoyalties, setCalculatedRoyalties] = useState<Array<{name: string, totalOrders: number, royaltyAmount: number, date: string}>>([]);
   const [selectedPoint, setSelectedPoint] = useState('');
   const [deliveryPoints, setDeliveryPoints] = useState<Array<{id: string, name: string, franchiseeName: string}>>([]);
   const [dragMode, setDragMode] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const ITEMS_PER_PAGE = 30;
+
+  // Carregar cálculos do localStorage ao iniciar
+  useEffect(() => {
+    const saved = localStorage.getItem('calculatedRoyalties');
+    if (saved) {
+      try {
+        setCalculatedRoyalties(JSON.parse(saved));
+      } catch (e) {
+        console.error('Erro ao carregar cálculos do localStorage:', e);
+      }
+    }
+  }, []);
+
+  // Salvar cálculos no localStorage sempre que mudar
+  useEffect(() => {
+    localStorage.setItem('calculatedRoyalties', JSON.stringify(calculatedRoyalties));
+  }, [calculatedRoyalties]);
 
   // Configurar sensores para drag and drop
   const sensors = useSensors(
@@ -409,36 +414,125 @@ export function Finance() {
     }
 
     try {
-      // Buscar pedidos do período filtrando pelo ponto selecionado
-      const { data: orders, error } = await supabase
+      // Buscar todos os pedidos do período
+      const { data: allOrders, error } = await supabase
         .from('orders')
         .select('*')
         .gte('created_at', startDate + 'T00:00:00')
-        .lte('created_at', endDate + 'T23:59:59')
-        .eq('point_name', selectedPoint);
+        .lte('created_at', endDate + 'T23:59:59');
 
       if (error) throw error;
 
-      if (!orders || orders.length === 0) {
+      // Filtrar no cliente pelo nome do ponto
+      const orders = (allOrders || []).filter((o: any) => {
+        const pt = o.pointName || o.point_name || '';
+        return pt === selectedPoint;
+      });
+
+      if (orders.length === 0) {
         alert('Nenhum pedido encontrado para este ponto no período selecionado.');
         return;
       }
 
-      // Calcular total de pedidos para o ponto selecionado
-      const totalOrders = orders.reduce((acc: number, order: any) => {
-        return acc + (parseFloat(order.total_value) || 0);
-      }, 0);
+      // Função para parsear preço
+      const parsePrice = (value: any): number => {
+        if (value === null || value === undefined) return 0;
+        if (typeof value === 'number') return value;
+        if (typeof value === 'string') {
+          const clean = value.replace('R$', '').replace(/\s/g, '').replace(',', '.');
+          const num = parseFloat(clean);
+          return isNaN(num) ? 0 : num;
+        }
+        return 0;
+      };
+
+      // Buscar preços ATUAIS da tabela products (mesma lógica do Reports.tsx)
+      const { data: currentProducts } = await supabase
+        .from('products')
+        .select('name, cost_price, sell_price, category')
+        .eq('region', region);
+      
+      const productPrices: Record<string, number> = {};
+      (currentProducts || []).forEach((p: any) => {
+        const n = (p.name || '').trim().toLowerCase();
+        productPrices[n] = parsePrice(p.sell_price || p.cost_price);
+      });
+
+      // Buscar itens dos pedidos
+      const orderIds = orders.map((o: any) => o.id);
+      const CHUNK_SIZE = 100;
+      let allOrderItems: any[] = [];
+      let allDeliveryProducts: any[] = [];
+
+      for (let i = 0; i < orderIds.length; i += CHUNK_SIZE) {
+        const chunk = orderIds.slice(i, i + CHUNK_SIZE);
+        const [{ data: orderItemsChunk }, { data: deliveryProductsChunk }] = await Promise.all([
+          supabase.from('order_items').select('order_id, product_name, quantity, cost_price').in('order_id', chunk),
+          supabase.from('delivery_products').select('order_id, product_name, quantity, category').in('order_id', chunk)
+        ]);
+        
+        if (orderItemsChunk) allOrderItems = allOrderItems.concat(orderItemsChunk);
+        if (deliveryProductsChunk) allDeliveryProducts = allDeliveryProducts.concat(deliveryProductsChunk);
+      }
+
+      const orderItemsByOrder: Record<string, any[]> = {};
+      const deliveryProductsByOrder: Record<string, any[]> = {};
+
+      allOrderItems.forEach(item => {
+        if (!orderItemsByOrder[item.order_id]) orderItemsByOrder[item.order_id] = [];
+        orderItemsByOrder[item.order_id].push(item);
+      });
+
+      allDeliveryProducts.forEach(item => {
+        if (!deliveryProductsByOrder[item.order_id]) deliveryProductsByOrder[item.order_id] = [];
+        deliveryProductsByOrder[item.order_id].push(item);
+      });
+
+      let totalRevenue = 0;
+
+      for (const order of orders) {
+        const orderItems = orderItemsByOrder[order.id] || [];
+        const deliveryProducts = deliveryProductsByOrder[order.id] || [];
+
+        const quantityMap: Record<string, number> = {};
+        const priceMap: Record<string, number> = {};
+        const norm = (s: string) => (s || '').trim().toLowerCase();
+
+        orderItems.forEach((it: any) => {
+          const n = norm(it.product_name);
+          quantityMap[n] = Number(it.quantity || 0);
+          // Usar preço ATUAL da tabela products; fallback para cost_price do pedido
+          priceMap[n] = productPrices[n] !== undefined ? productPrices[n] : parsePrice(it.cost_price);
+        });
+
+        deliveryProducts.forEach((it: any) => {
+          const n = norm(it.product_name);
+          const deliveryQty = Number(it.quantity || 0);
+          const existingQty = quantityMap[n] || 0;
+          // Usar o MAIOR valor (mesma lógica do Reports.tsx)
+          quantityMap[n] = Math.max(existingQty, deliveryQty);
+        });
+
+        for (const [normName, qty] of Object.entries(quantityMap)) {
+          if (qty > 0) {
+            const unitPrice = priceMap[normName] || 0;
+            totalRevenue += qty * unitPrice;
+          }
+        }
+      }
 
       // Calcular royalties
       const royaltyPct = parseFloat(royaltyPercentage) / 100;
-      const royaltyAmount = totalOrders * royaltyPct;
+      const royaltyAmount = totalRevenue * royaltyPct;
 
-      // Atualizar estado com o resultado
-      setCalculatedRoyalties([{
+      // Atualizar estado com o resultado (adiciona no início para mostrar mais recentes primeiro)
+      const newCalculation = {
         name: selectedPoint,
-        totalOrders,
-        royaltyAmount
-      }]);
+        totalOrders: totalRevenue,
+        royaltyAmount,
+        date: new Date().toISOString()
+      };
+      setCalculatedRoyalties([newCalculation, ...calculatedRoyalties].slice(0, 30 * 10)); // Limita a 300 cálculos no total
     } catch (error: any) {
       console.error('Erro ao calcular royalties:', error);
       alert('Erro ao calcular royalties: ' + error.message);
@@ -746,40 +840,72 @@ export function Finance() {
               </div>
 
               <div className="space-y-4">
-                <h4 className="text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-slate-100 pb-2">Repasse por Franqueado</h4>
-                {calculatedRoyalties.length > 0 ? (
-                  calculatedRoyalties.map((r, i) => (
-                    <div key={i} className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-bold text-on-surface">{r.name}</p>
-                        <p className="text-[10px] text-on-surface-variant">Total Pedidos: R$ {r.totalOrders.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-sm font-black text-primary">R$ {r.royaltyAmount.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</p>
-                        <span className="inline-block px-2 py-0.5 text-[9px] font-bold rounded uppercase bg-green-100 text-green-700">Calculado</span>
-                      </div>
-                    </div>
-                  ))
+                <div className="flex items-center justify-between">
+                  <h4 className="text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-slate-100 pb-2">Histórico de Cálculos</h4>
+                  {calculatedRoyalties.length > 0 && (
+                    <button
+                      onClick={() => setCalculatedRoyalties([])}
+                      className="text-[10px] font-bold text-red-600 hover:text-red-700 transition-colors"
+                    >
+                      Limpar Todos
+                    </button>
+                  )}
+                </div>
+                {calculatedRoyalties.length === 0 ? (
+                  <div className="text-center py-6">
+                    <p className="text-xs text-on-surface-variant">Nenhum cálculo realizado ainda.</p>
+                  </div>
                 ) : (
-                  franchises.map((fran, i) => (
-                    <div key={i} className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-bold text-on-surface">{fran.name}</p>
-                        <p className="text-[10px] text-on-surface-variant">Percentual: {fran.pct}</p>
+                  <>
+                    {calculatedRoyalties
+                      .slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE)
+                      .map((r, i) => (
+                        <div key={i} className="flex items-center justify-between">
+                          <div>
+                            <p className="text-sm font-bold text-on-surface">{r.name}</p>
+                            <p className="text-[10px] text-on-surface-variant">
+                              Total: R$ {r.totalOrders.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2})} ·
+                              {r.date ? ` ${new Date(r.date).toLocaleDateString('pt-BR')} ${new Date(r.date).toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'})}` : ''}
+                            </p>
+                          </div>
+                          <div className="text-right flex items-center gap-3">
+                            <p className="text-sm font-black text-primary">R$ {r.royaltyAmount.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</p>
+                            <button
+                              onClick={() => {
+                                const newRoyalties = calculatedRoyalties.filter((_, idx) => idx !== (currentPage - 1) * ITEMS_PER_PAGE + i);
+                                setCalculatedRoyalties(newRoyalties);
+                              }}
+                              className="p-1.5 hover:bg-red-50 rounded-lg text-red-500 hover:text-red-600 transition-colors"
+                              title="Excluir cálculo"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    {calculatedRoyalties.length > ITEMS_PER_PAGE && (
+                      <div className="flex items-center justify-center gap-2 mt-4 pt-4 border-t border-slate-100">
+                        <button
+                          onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                          disabled={currentPage === 1}
+                          className="px-3 py-1 text-xs font-bold rounded-lg bg-slate-50 border border-slate-200 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          Anterior
+                        </button>
+                        <span className="text-xs font-bold text-on-surface-variant">
+                          Página {currentPage} de {Math.ceil(calculatedRoyalties.length / ITEMS_PER_PAGE)}
+                        </span>
+                        <button
+                          onClick={() => setCurrentPage(Math.min(Math.ceil(calculatedRoyalties.length / ITEMS_PER_PAGE), currentPage + 1))}
+                          disabled={currentPage >= Math.ceil(calculatedRoyalties.length / ITEMS_PER_PAGE)}
+                          className="px-3 py-1 text-xs font-bold rounded-lg bg-slate-50 border border-slate-200 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          Próxima
+                        </button>
                       </div>
-                      <div className="text-right">
-                        <p className="text-sm font-black text-primary">R$ {fran.amount}</p>
-                        <span className={cn("inline-block px-2 py-0.5 text-[9px] font-bold rounded uppercase", fran.color)}>{fran.status}</span>
-                      </div>
-                    </div>
-                  ))
+                    )}
+                  </>
                 )}
-              </div>
-
-              <div className="mt-4 pt-4 border-t border-slate-100">
-                <button className="w-full py-4 bg-slate-50 text-tertiary font-bold text-sm rounded-xl border border-slate-200 hover:bg-slate-100 transition-all flex items-center justify-center gap-2">
-                  <History className="w-4 h-4" /> Ver Histórico
-                </button>
               </div>
             </div>
           </div>

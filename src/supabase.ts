@@ -67,13 +67,15 @@ export async function signUpWithEmail(email: string, password: string) {
       email_confirm: true,
     });
     if (error) {
+      console.error('[signUpWithEmail] Admin API error:', error);
       if (!error.message?.toLowerCase().includes('unauthorized')) throw error;
       console.warn('[signUpWithEmail] Admin API Unauthorized — usando fallback signUp.');
     } else {
-      console.log('[signUpWithEmail] Admin API sucesso:', data);
+      console.log('[signUpWithEmail] Admin API sucesso. User ID:', data.user?.id, 'Email confirmado:', data.user?.email_confirmed_at);
       return data;
     }
   } catch (adminErr: any) {
+    console.error('[signUpWithEmail] Admin API exception:', adminErr);
     if (!adminErr.message?.toLowerCase().includes('unauthorized')) throw adminErr;
     console.warn('[signUpWithEmail] Admin API indisponível — usando fallback signUp.');
   }
@@ -86,13 +88,24 @@ export async function signUpWithEmail(email: string, password: string) {
     throw signUpError;
   }
   
+  console.log('[signUpWithEmail] signUp normal. User ID:', data.user?.id, 'Email confirmado:', data.user?.email_confirmed_at);
+  
   // Confirmar email via SQL direto (para garantir que login funcione)
   if (data?.user?.id) {
-    console.log('[signUpWithEmail] Confirmando email via SQL...');
-    await supabase.rpc('confirm_user_email', { user_id_input: data.user.id });
+    console.log('[signUpWithEmail] Confirmando email via SQL RPC...');
+    try {
+      const { error: rpcError } = await supabase.rpc('confirm_user_email', { user_id_input: data.user.id });
+      if (rpcError) {
+        console.error('[signUpWithEmail] RPC confirm_user_email erro:', rpcError);
+      } else {
+        console.log('[signUpWithEmail] RPC confirm_user_email sucesso');
+      }
+    } catch (rpcErr: any) {
+      console.error('[signUpWithEmail] RPC confirm_user_email exception:', rpcErr);
+    }
   }
   
-  console.log('[signUpWithEmail] signUp sucesso:', data);
+  console.log('[signUpWithEmail] signUp sucesso final:', data);
   return data;
 }
 
@@ -192,7 +205,7 @@ export function subscribeToTable(
   callback: (rows: any[]) => void,
   orderCol = 'created_at',
   ascending = false,
-  limitCount = 500, // Limite padrão para evitar carregamentos massivos
+  limitCount = 99999, // Sem limite - todos os pedidos devem aparecer
   dateRange?: { column: string; start?: string; end?: string }
 ) {
   let active = true;

@@ -824,7 +824,7 @@ export function Franqueados() {
       {/* Bento Grid */}
       <div className="grid grid-cols-12 gap-6">
         {/* Main List */}
-        <div className="col-span-12 lg:col-span-8 space-y-6">
+        <div className="col-span-12 space-y-6">
           {/* Registration Form */}
           <AnimatePresence>
             {isAddingFranchisee && (
@@ -994,87 +994,6 @@ export function Franqueados() {
           </div>
         </div>
 
-        {/* Right Column */}
-        <div className="col-span-12 lg:col-span-4 space-y-6">
-          {/* KPI Card */}
-          <div className="bg-surface-container-lowest rounded-xl p-6 shadow-sm border-l-4 border-secondary">
-            <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-wider mb-4">Métrica de Rede</h3>
-            <div className="flex items-end justify-between">
-              <div>
-                <span className="text-4xl font-black text-primary">{totalPoints}</span>
-                <p className="text-xs text-on-surface-variant font-medium mt-1">Pontos de entrega ativos</p>
-              </div>
-              <div className="w-12 h-12 rounded-full bg-secondary/10 flex items-center justify-center text-secondary">
-                <MapPin className="w-6 h-6" />
-              </div>
-            </div>
-            <div className="mt-6 pt-6 border-t border-surface-container">
-              <div className="flex justify-between items-center text-sm mb-2">
-                <span className="text-on-surface-variant">Crescimento Mensal</span>
-                <span className="text-emerald-600 font-bold">+8% ↑</span>
-              </div>
-              <div className="w-full bg-surface-container rounded-full h-1.5 overflow-hidden">
-                <motion.div
-                  initial={{ width: 0 }}
-                  animate={{ width: '65%' }}
-                  transition={{ duration: 1, ease: 'easeOut' }}
-                  className="bg-primary h-full rounded-full"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Stats */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="bg-white rounded-xl p-4 border border-slate-100 shadow-sm">
-              <p className="text-[10px] font-bold text-on-surface-variant uppercase">Total Recife</p>
-              <p className="text-2xl font-black text-primary">{franchisees.filter(f => f.region === 'Recife').length}</p>
-            </div>
-            <div className="bg-white rounded-xl p-4 border border-slate-100 shadow-sm">
-              <p className="text-[10px] font-bold text-on-surface-variant uppercase">Total Salvador</p>
-              <p className="text-2xl font-black text-secondary">{franchisees.filter(f => f.region === 'Salvador').length}</p>
-            </div>
-          </div>
-
-          {/* Recent Activity */}
-          <div className="bg-surface-container-lowest rounded-xl p-6 shadow-sm">
-            <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-wider mb-6 flex items-center justify-between">
-              Atividade Recente
-              <span className="text-on-surface-variant">🕐</span>
-            </h3>
-            <div className="space-y-6">
-              {MOCK_ACTIVITIES.map(activity => (
-                <div key={activity.id} className="flex gap-4">
-                  <div className="mt-1">
-                    <div className={`w-2 h-2 rounded-full ring-4 ${
-                      activity.type === 'registration' ? 'bg-primary ring-primary/10' :
-                      activity.type === 'update' ? 'bg-secondary ring-secondary/10' :
-                      'bg-emerald-500 ring-emerald-500/10'
-                    }`}></div>
-                  </div>
-                  <div>
-                    <p className="text-xs font-bold text-on-surface">{activity.title}</p>
-                    <p className="text-[11px] text-on-surface-variant">{activity.description}</p>
-                    <p className="text-[10px] text-primary/60 mt-1 font-bold">{activity.time}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Map */}
-          <div className="bg-surface-container rounded-xl overflow-hidden shadow-sm relative h-48 group">
-            <div
-              className="absolute inset-0 bg-cover bg-center opacity-40 grayscale group-hover:grayscale-0 transition-all duration-500"
-              style={{ backgroundImage: "url('https://picsum.photos/seed/map/800/400')" }}
-            ></div>
-            <div className="absolute inset-0 bg-gradient-to-t from-primary/40 to-transparent"></div>
-            <div className="absolute bottom-4 left-4">
-              <p className="text-white font-bold text-sm">Visualizar Malha Logística</p>
-              <p className="text-white/80 text-[10px]">{region} e Região Metropolitana</p>
-            </div>
-          </div>
-        </div>
       </div>
 
       {/* Modal Editar Franqueado */}

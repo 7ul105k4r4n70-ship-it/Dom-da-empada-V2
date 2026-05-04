@@ -230,12 +230,6 @@ export function Reports() {
           const startDate = new Date(filterStartDate);
           startDate.setHours(0, 0, 0, 0);
           query = query.gte('created_at', startDate.toISOString());
-        } else {
-          // Padrão: últimos 7 dias para evitar carregar o banco inteiro
-          const sevenDaysAgo = new Date();
-          sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-          sevenDaysAgo.setHours(0, 0, 0, 0);
-          query = query.gte('created_at', sevenDaysAgo.toISOString());
         }
 
         if (filterEndDate) {
@@ -509,6 +503,19 @@ export function Reports() {
       try {
         const orderIds = orders.map(o => o.id);
         
+        // Buscar preços ATUAIS da tabela products (página Preços e Royalties)
+        const { data: currentProducts } = await supabase
+          .from('products')
+          .select('name, cost_price, sell_price, category')
+          .eq('region', region);
+        
+        const productPrices: Record<string, number> = {};
+        (currentProducts || []).forEach((p: any) => {
+          const n = (p.name || '').trim().toLowerCase();
+          // Usar sell_price se disponível, senão cost_price (ou 0)
+          productPrices[n] = parsePrice(p.sell_price || p.cost_price);
+        });
+        
         // [CONGELADO/FROZEN] - Otimização de Performance
         // IMPORTANTE: NÃO ALTERE CHUNK_SIZE = 100 a menos que requisitado explicitamente.
         // Chunk orderIds array into batches of 100 to prevent header too long errors in Supabase
@@ -557,40 +564,45 @@ export function Reports() {
               const n = norm(it.product_name);
               nameMap[n] = it.product_name;
               quantityMap[n] = Number(it.quantity || 0);
-              priceMap[n] = parsePrice(it.cost_price);
+              // Usar preço ATUAL da tabela products; fallback para cost_price do pedido
+              priceMap[n] = productPrices[n] !== undefined ? productPrices[n] : parsePrice(it.cost_price);
             });
 
             deliveryProducts.forEach((it: any) => {
               const n = norm(it.product_name);
               if (!nameMap[n]) nameMap[n] = it.product_name;
-              quantityMap[n] = Number(it.quantity || 0); // Sobrescrita absoluta
+              const deliveryQty = Number(it.quantity || 0);
+              const existingQty = quantityMap[n] || 0;
+              // Usar o MAIOR valor: delivery_products pode estar em caixas,
+              // order_items em unidades. O maior é o correto (unidades).
+              quantityMap[n] = Math.max(existingQty, deliveryQty);
               if (it.category) categoryMap[n] = it.category;
             });
 
-            // Calcular unidades totais usando getUnitsPerBox
+            // Calcular caixas e valor a partir das UNIDADES digitadas pelo motorista
             let totalUnits = 0;
             let totalValue = 0;
 
             for (const [normName, qty] of Object.entries(quantityMap)) {
-              if (qty > 0 || qty === 0) { // Inclui zerados no cálculo de valor se necessário, mas foca em > 0 para o total
+              if (qty > 0 || qty === 0) {
                 const productName = nameMap[normName];
                 const category = categoryMap[normName] || '';
-                // A quantidade vem em CAIXAS do motorista - converter para unidades
+                // A quantidade vem em UNIDADES do motorista - calcular caixas
                 const unitsPerBox = getUnitsPerBox(category, productName);
-                const productUnits = qty * unitsPerBox; 
+                const productBoxes = unitsPerBox > 0 ? qty / unitsPerBox : 0;
                 const unitPrice = priceMap[normName] || 0;
                 
                 if (qty > 0) {
-                  totalUnits += productUnits;
-                  totalValue += productUnits * unitPrice;
+                  totalUnits += qty;
+                  totalValue += qty * unitPrice;
                 }
 
                 // Acumular por categoria (inferir pelo nome se o banco veio com 'Outros' ou vazio)
                 const inferredCat = normalizeCategory(category) || inferCategory(productName);
                 const targetCat = catTotals[inferredCat] ? inferredCat : 'Outros';
-                catTotals[targetCat].boxes += qty;
-                catTotals[targetCat].units += productUnits;
-                catTotals[targetCat].value += productUnits * unitPrice;
+                catTotals[targetCat].boxes += productBoxes;
+                catTotals[targetCat].units += qty;
+                catTotals[targetCat].value += qty * unitPrice;
               }
             }
 
@@ -1023,8 +1035,8 @@ export function Reports() {
       let grandTotalValue = 0;
       (data?.products || []).forEach((p: any) => {
         const unitsPerBox = getUnitsPerBox(p.category, p.name);
-        const boxes = p.quantity;
-        const totalUnits = boxes * unitsPerBox;
+        const totalUnits = p.quantity;
+        const boxes = unitsPerBox > 0 ? totalUnits / unitsPerBox : 0;
         const unitPrice = parsePrice(p.cost_price);
         const totalValue = totalUnits * unitPrice;
 
@@ -1422,6 +1434,15 @@ export function Reports() {
                 {filterEntregaExtra ? '✓ Apenas Extras' : 'Incluir Extras'}
               </button>
             </div>
+            {/* Valor Total dos Relatórios Filtrados */}
+            {Object.keys(reportCategoryTotals).length > 0 && (
+              <div className="mt-2 p-2 bg-primary/10 rounded-lg border border-primary/20">
+                <span className="text-[10px] font-bold text-primary/70">Valor Total:</span>
+                <div className="text-sm font-black text-primary">
+                  R$ {Number(Object.values(reportCategoryTotals).reduce((sum: number, cat: any) => sum + cat.value, 0)).toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -1697,25 +1718,32 @@ export function Reports() {
 
                                  // Ordenar cada grupo por sort_order
                                  Object.keys(grouped).forEach(cat => {
-                                   grouped[cat].sort((a, b) => (a.sort_order || 999) - (b.sort_order || 999));
+                                   grouped[cat].sort((a: any, b: any) => (a.sort_order || 999) - (b.sort_order || 999));
                                  });
-                                const grandTotalBoxes = data.products.reduce((a, p) => a + p.quantity, 0);
-                                const grandTotalUnits = data.products.reduce((a, p) => a + p.quantity * getUnitsPerBox(p.category, p.name), 0);
-                                const grandTotalValue = data.products.reduce((a, p) => a + (p.quantity * getUnitsPerBox(p.category, p.name) * parsePrice(p.cost_price)), 0);
+                                const grandTotalUnits = data.products.reduce((a: number, p: any) => a + p.quantity, 0);
+                                const grandTotalBoxes = data.products.reduce((a: number, p: any) => {
+                                  const unitsPerBox = getUnitsPerBox(p.category, p.name);
+                                  return a + (unitsPerBox > 0 ? p.quantity / unitsPerBox : 0);
+                                }, 0);
+                                const grandTotalValue = data.products.reduce((a: number, p: any) => {
+                                  return a + (p.quantity * parsePrice(p.cost_price));
+                                }, 0);
                                 const extra = orderExtras[order.id] || 0;
                                 return (
                                   <div className="space-y-5">
                                     {CATEGORIES_ORDER.concat('Outros').map(cat => {
                                       const items = grouped[cat];
                                       if (!items || items.length === 0) return null;
-                                      // Calcular totais: quantity = caixas digitadas pelo motorista
-                                      const totalBoxes = items.reduce((a, p) => a + p.quantity, 0);
-                                      const totalUnits = items.reduce((a, p) => a + p.quantity * getUnitsPerBox(p.category, p.name), 0);
-                                      const categoryTotalValue = items.reduce((a, p) => {
-                                                const unitPrice = parsePrice(p.cost_price);
-                                                const unitsPerBox = getUnitsPerBox(p.category, p.name);
-                                                return a + (p.quantity * unitsPerBox * unitPrice);
-                                              }, 0);
+                                      // Calcular totais: p.quantity = unidades digitadas pelo motorista
+                                      const totalUnits = items.reduce((a: number, p: any) => a + p.quantity, 0);
+                                      const totalBoxes = items.reduce((a: number, p: any) => {
+                                        const unitsPerBox = getUnitsPerBox(p.category, p.name);
+                                        return a + (unitsPerBox > 0 ? p.quantity / unitsPerBox : 0);
+                                      }, 0);
+                                      const categoryTotalValue = items.reduce((a: number, p: any) => {
+                                        const unitPrice = parsePrice(p.cost_price);
+                                        return a + (p.quantity * unitPrice);
+                                      }, 0);
                                       const headerBg = (CATEGORY_HEADER_BG as any)[cat] || 'bg-slate-600';
                                       return (
                                         <div key={cat} className="bg-white rounded-xl border border-slate-100 overflow-hidden">
@@ -1744,20 +1772,19 @@ export function Reports() {
                                               // DEBUG: Mostrar valor bruto do cost_price
                                               console.log(`[DEBUG PREÇO] Produto: ${p.name} | cost_price bruto:`, p.cost_price, '| tipo:', typeof p.cost_price);
                                               
-                                              // quantity = caixas digitadas pelo motorista
+                                              // p.quantity = unidades digitadas pelo motorista
                                               const unitsPerBox = getUnitsPerBox(p.category, p.name);
-                                              const boxQty = p.quantity;
-                                              const totalUnits = p.quantity * unitsPerBox;
+                                              const totalUnits = p.quantity;
+                                              const boxQty = unitsPerBox > 0 ? totalUnits / unitsPerBox : 0;
                                               const unitPrice = parsePrice(p.cost_price);
                                               const totalValue = totalUnits * unitPrice;
 
                                               console.log(`📦 Produto: ${p.name}`);
                                               console.log(`   ├── Categoria: "${p.category}"`);
-                                              console.log(`   ├── Quantidade (caixas): ${p.quantity}`);
+                                              console.log(`   ├── Unidades: ${totalUnits}`);
                                               console.log(`   ├── Unidades/Caixa: ${unitsPerBox}`);
-                                              console.log(`   ├── Total Unidades: ${totalUnits}`);
-                                              console.log(`   ├── Custo (bruto): ${p.cost_price}`);
-                                              console.log(`   ├── Preço Unitário (parseado): R$ ${unitPrice}`);
+                                              console.log(`   ├── Caixas: ${boxQty}`);
+                                              console.log(`   ├── Preço Unitário: R$ ${unitPrice}`);
                                               console.log(`   └── Valor Total: R$ ${totalValue.toFixed(2)}`);
                                               
                                               return (

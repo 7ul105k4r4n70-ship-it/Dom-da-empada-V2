@@ -3,7 +3,6 @@ import {
   TrendingUp, 
   TrendingDown, 
   Minus, 
-  AlertCircle,
   RotateCcw,
   AlertTriangle,
   X
@@ -108,43 +107,14 @@ export function KPIs() {
       </div>
 
       {activeTab === 'overview' ? (
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8" key="overview-grid">
-        <div className="lg:col-span-8">
+      <div className="grid grid-cols-1 gap-8" key="overview-grid">
+        <div>
           <KPIFlowDistributionCard
             region={region}
             unit={unit}
             selectedPoint={selectedPoint}
             onSelectPoint={setSelectedPoint}
           />
-        </div>
-
-        <div className="lg:col-span-4 space-y-6">
-          <div className="bg-tertiary text-white rounded-xl p-6 relative overflow-hidden shadow-lg">
-            <div className="relative z-10">
-              <div className="flex items-center gap-2 mb-4">
-                <AlertCircle className="w-5 h-5 text-secondary" />
-                <h5 className="font-bold text-xs tracking-widest uppercase">Alerta de Estoque</h5>
-              </div>
-              <p className="text-sm font-medium leading-relaxed">
-                A unidade <span className="font-bold text-secondary-container">Shopping Salvador</span> está operando com 15% abaixo da margem de empadas de Camarão.
-              </p>
-              <button className="mt-4 w-full bg-white/10 hover:bg-white/20 py-2 rounded-lg text-xs font-bold transition-colors">Resolver Agora</button>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
-            <h5 className="font-bold text-on-surface uppercase text-xs tracking-widest mb-4">Concentração Geográfica</h5>
-            <div className="aspect-square bg-slate-50 rounded-lg relative overflow-hidden">
-              <div className="w-full h-full flex items-center justify-center">
-                <svg viewBox="0 0 200 200" className="w-full h-full p-6 opacity-10">
-                  <path d="M50 100 Q100 40 150 100 Q100 160 50 100Z" fill="currentColor" className="text-slate-400" />
-                </svg>
-              </div>
-              <div className="absolute top-1/4 left-1/3 w-12 h-12 bg-primary/20 rounded-full animate-pulse border-2 border-primary"></div>
-              <div className="absolute bottom-1/3 right-1/4 w-8 h-8 bg-secondary/20 rounded-full animate-pulse border-2 border-secondary"></div>
-            </div>
-            <p className="text-[10px] text-on-surface-variant mt-4 text-center">Focos de alta demanda detectados no <span className="font-bold">Setor Norte</span>.</p>
-          </div>
         </div>
       </div>
       ) : (

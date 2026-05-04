@@ -555,14 +555,7 @@ export function Schedule() {
               >
                 <div className="flex justify-between items-start">
                   <div>
-                    <p className={cn(
-                      "text-[10px] font-black uppercase tracking-widest",
-                      selectedTrip.status === 'Conflito' ? "text-red-600" : 
-                      selectedTrip.color === 'primary' ? "text-primary" :
-                      selectedTrip.color === 'secondary' ? "text-secondary" :
-                      "text-tertiary"
-                    )}>{selectedTrip.type}</p>
-                    <h4 className="text-sm font-black text-on-surface">{selectedTrip.location}</h4>
+                    <h4 className="text-sm font-black text-on-surface">Detalhes da Rota</h4>
                   </div>
                   <div className="flex items-center gap-1">
                     <button
@@ -600,7 +593,6 @@ export function Schedule() {
                 {/* Pontos/Paradas da rota */}
                 {selectedTrip.points && selectedTrip.points.length > 0 && (
                   <div className="bg-white rounded-lg border border-slate-100 p-2 space-y-1.5">
-                    <p className="text-[10px] font-bold text-on-surface-variant uppercase">Rota com {selectedTrip.points.length} parada(s)</p>
                     {selectedTrip.points.map((point, idx) => (
                       <div key={point.id} className="flex items-center gap-2 text-xs">
                         <span className="w-5 h-5 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[10px] font-bold">

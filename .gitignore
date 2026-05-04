@@ -170,3 +170,5 @@ build/
 /backup/
 /backups/
 /old/
+.vercel
+.env*.local

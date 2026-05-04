@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { TrendingUp, Truck, Clock, Package, Calendar, Navigation, MapPin, FileText, User, AlertTriangle, Camera } from 'lucide-react';
+import { TrendingUp, Truck, Clock, Package, Calendar, Navigation, MapPin, FileText, User, AlertTriangle, Camera, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import { cn } from '@/lib/utils';
 import { supabase, subscribeToTable, seedInitialData } from '@/supabase';
@@ -27,6 +27,14 @@ export function Dashboard() {
 
   // Estado para modal de detalhes do pedido
   const [selectedOrderForModal, setSelectedOrderForModal] = useState<Order | null>(null);
+  
+  // Estado para pedidos ocultos do card "Sem Motorista"
+  const [hiddenOrderIds, setHiddenOrderIds] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('dashboard_hidden_orders');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -101,8 +109,7 @@ export function Dashboard() {
           const { data: allOrdersData } = await supabase
             .from('orders')
             .select('*')
-            .gte('created_at', new Date(Date.now() - 7 * 86400000).toISOString())
-            .limit(500);
+            .limit(2000);
           
           if (allOrdersData && allOrdersData.length > 0) {
             const ordersMap: Record<string, Order[]> = {};
@@ -182,12 +189,18 @@ export function Dashboard() {
     
     const unsub = subscribeToTable('orders', regionFilter, (data) => {
       if (!cancelled) {
-        // Filtrar apenas pedidos recentes no cliente também
-        const recentOrders = (data || []).filter(order => {
-          const orderDate = new Date(order.created_at || order.timestamp || Date.now());
-          return orderDate >= sevenDaysAgo;
+        const allOrders = data || [];
+        const doneStatuses = ['completed', 'delivered', 'entregue', 'cancelled', 'cancelado', 'closed', 'fechado'];
+        const semMotorista = allOrders.filter(o => {
+          const statusLower = (o.status || '').toLowerCase();
+          const isDone = doneStatuses.some(s => statusLower.includes(s));
+          const hasDriver = !!(o.driver_name || (o as any).driverName || (o as any).driver_id);
+          return !isDone && !hasDriver;
         });
-        setOrders(recentOrders);
+        console.log('[Dashboard] Total pedidos carregados:', allOrders.length);
+        console.log('[Dashboard] Pedidos SEM MOTORISTA:', semMotorista.length);
+        console.log('[Dashboard] Status dos pedidos SEM MOTORISTA:', [...new Set(semMotorista.map(o => o.status))]);
+        setOrders(allOrders);
         setLoading(false);
       }
     }, 'created_at');
@@ -279,7 +292,7 @@ export function Dashboard() {
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-xs text-on-surface-variant">Sem Motorista</span>
-                <span className="text-lg font-black text-red-500">{todayOrders.filter(o => !['COMPLETED', 'DELIVERED', 'Entregue', 'CANCELLED', 'Cancelado'].includes(o.status) && !(o.driver_name || (o as any).driverName || (o as any).driver_id)).length}</span>
+                <span className="text-lg font-black text-red-500">{orders.filter(o => !['COMPLETED', 'DELIVERED', 'Entregue', 'CANCELLED', 'Cancelado'].includes(o.status) && !(o.driver_name || (o as any).driverName || (o as any).driver_id)).length}</span>
               </div>
             </div>
           </div>
@@ -333,78 +346,75 @@ export function Dashboard() {
                         <Truck className="w-3 h-3" />
                         {daySchedules[0]?.vehicle || 'Sem veículo'}
                       </span>
-                      <span>· {daySchedules.length} viagem{daySchedules.length > 1 ? 'ns' : ''}</span>
+                      <span>· {(daySchedules as any).length} viagem{(daySchedules as any).length > 1 ? 'ns' : ''}</span>
                     </div>
                   </div>
                   
                   {/* Corpo branco com as viagens */}
                   <div className="p-3 flex-1">
-                    <div className="space-y-2 flex-1 overflow-y-auto max-h-[180px] pr-1">
-                      {daySchedules.map(schedule => {
+                    <div className="space-y-2 flex-1 overflow-y-auto max-h-[240px] pr-1">
+                      {(daySchedules as any).map((schedule: any) => {
                         const orders = linkedOrders[schedule.id] || [];
                         return (
                           <div key={schedule.id} className="bg-slate-50 rounded-xl p-2.5 border border-slate-100">
                             <div className="flex items-start justify-between mb-1.5">
                               <div className="min-w-0 flex-1">
-                                <p className="text-[11px] font-black text-slate-800 truncate">{schedule.title}</p>
+                                <p className="text-[11px] font-black text-slate-800">{schedule.type || schedule.title || 'Rota'}</p>
+                                {schedule.scheduled_time && (
+                                  <p className="text-[9px] text-slate-500">{schedule.scheduled_time}</p>
+                                )}
                               </div>
+                              {schedule.status === 'Conflito' && (
+                                <span className="text-[8px] font-bold bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full">CONFLITO</span>
+                              )}
                             </div>
+                            <p className="text-[10px] text-slate-600 mb-1">{schedule.vehicle || 'Sem veículo'}</p>
                             
-                            {/* Pontos com PDFs */}
-                            {schedule.points && schedule.points.length > 0 && (
-                              <div className="space-y-1 mt-1.5 pt-1.5 border-t border-slate-200">
-                                {schedule.points.map((point, idx) => {
-                                  const pointOrder = orders.find((o: Order) => 
-                                    o.pointName === point.name || o.point_name === point.name
-                                  );
-                                  return (
-                                    <div key={idx} className="flex items-center justify-between gap-2">
-                                      <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                                        <span className="w-4 h-4 rounded-full bg-[#7B2D3B]/10 text-[#7B2D3B] flex items-center justify-center text-[8px] font-bold shrink-0">
-                                          {idx + 1}
-                                        </span>
-                                        <div className="min-w-0">
-                                          <p className="text-[10px] font-bold text-slate-700 truncate">{point.name}</p>
-                                          <p className="text-[9px] text-slate-500">{point.region}</p>
+                            {/* Pontos de entrega */}
+                            {(() => {
+                              // Tentar obter pontos de vÃ¡rias fontes
+                              let pts: Array<{name: string; region?: string}> = [];
+                              if (schedule.points && schedule.points.length > 0) {
+                                pts = schedule.points;
+                              } else if (schedule.location) {
+                                pts = schedule.location.split(/\s*[â†’â†’>]+\s*/).filter((s: string) => s.trim()).map((name: string) => ({ name: name.trim() }));
+                              }
+                              if (pts.length === 0 && orders.length > 0) {
+                                pts = orders.map((o: Order) => ({ name: o.pointName || (o as any).point_name || 'Ponto desconhecido' }));
+                              }
+                              if (pts.length === 0) return null;
+                              return (
+                                <div className="space-y-1 mt-1.5 pt-1.5 border-t border-slate-200">
+                                  <p className="text-[9px] font-bold text-slate-500 uppercase">{pts.length} parada{pts.length > 1 ? 's' : ''}</p>
+                                  {pts.map((point: any, idx: number) => {
+                                    const name = typeof point === 'string' ? point : point.name;
+                                    const pointOrder = orders.find((o: Order) => o.pointName === name || (o as any).point_name === name);
+                                    return (
+                                      <div key={idx} className="flex items-center justify-between gap-2">
+                                        <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                          <span className="w-4 h-4 rounded-full bg-[#7B2D3B]/10 text-[#7B2D3B] flex items-center justify-center text-[8px] font-bold shrink-0">
+                                            {idx + 1}
+                                          </span>
+                                          <div className="min-w-0">
+                                            <p className="text-[10px] font-bold text-slate-700 truncate">{name}</p>
+                                            {point.region && <p className="text-[9px] text-slate-500">{point.region}</p>}
+                                          </div>
                                         </div>
+                                        {pointOrder && (
+                                          <button
+                                            onClick={() => setSelectedOrderForModal(pointOrder)}
+                                            className="p-1 hover:bg-[#7B2D3B]/10 rounded-full transition-colors shrink-0"
+                                            title="Gerar PDF do pedido"
+                                          >
+                                            <Camera className="w-3.5 h-3.5 text-[#7B2D3B]" />
+                                          </button>
+                                        )}
                                       </div>
-                                      {pointOrder && (
-                                        <button
-                                          onClick={() => setSelectedOrderForModal(pointOrder)}
-                                          className="p-1 hover:bg-[#7B2D3B]/10 rounded-full transition-colors shrink-0"
-                                          title="Gerar PDF do pedido"
-                                        >
-                                          <Camera className="w-3.5 h-3.5 text-[#7B2D3B]" />
-                                        </button>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            )}
-                            
-                            {/* Fallback: pedidos sem points */}
-                            {(!schedule.points || schedule.points.length === 0) && orders.length > 0 && (
-                              <div className="space-y-1 mt-1.5 pt-1.5 border-t border-slate-200">
-                                {orders.map((order) => (
-                                  <div key={order.id} className="flex items-center justify-between gap-2">
-                                    <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                                      <MapPin className="w-2.5 h-2.5 text-[#7B2D3B] shrink-0" />
-                                      <p className="text-[10px] text-slate-700 truncate">
-                                        {order.pointName || order.point_name || 'Ponto desconhecido'}
-                                      </p>
-                                    </div>
-                                    <button
-                                      onClick={() => setSelectedOrderForModal(order)}
-                                      className="p-1 hover:bg-[#7B2D3B]/10 rounded-full transition-colors shrink-0"
-                                      title="Gerar PDF do pedido"
-                                    >
-                                      <Camera className="w-3.5 h-3.5 text-[#7B2D3B]" />
-                                    </button>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
+                                    );
+                                  })}
+                                </div>
+                              );
+                            })()}
                           </div>
                         );
                       })}
@@ -435,43 +445,31 @@ export function Dashboard() {
           <h4 className="text-sm font-bold uppercase tracking-widest text-on-surface-variant px-2">Rota dos Motoristas</h4>
           
           <div className="flex flex-wrap gap-4 overflow-y-auto max-h-[800px] pr-2 w-full">
-            {/* Motoristas: todos os pedidos deles. Sem Motorista: apenas pedidos de hoje */}
-            {Object.entries(
-              orders.reduce<Record<string, Order[]>>((acc, order) => {
-                if (!['COMPLETED', 'DELIVERED', 'Entregue', 'CANCELLED', 'Cancelado'].includes(order.status)) {
+            {/* Motoristas: todos os pedidos deles. Sem Motorista: TODOS os pedidos nao selecionados */}
+            {(() => {
+              const doneStatuses = ['completed', 'delivered', 'entregue', 'cancelled', 'cancelado', 'closed', 'fechado'];
+              const hideOrder = (id: string) => {
+                const newHidden = [...hiddenOrderIds, id];
+                setHiddenOrderIds(newHidden);
+                localStorage.setItem('dashboard_hidden_orders', JSON.stringify(newHidden));
+              };
+              const grouped = orders.reduce<Record<string, Order[]>>((acc, order) => {
+                const statusLower = (order.status || '').toLowerCase();
+                const isDone = doneStatuses.some(s => statusLower.includes(s));
+                if (!isDone) {
                   const driverId = (order as any).driver_id;
                   const driver = order.driverName || (order as any).driver_name
                     || (driverId ? driverNames[driverId] : null)
                     || 'Sem Motorista';
-                  if (driver === 'Sem Motorista') {
-                    const todayStr = new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Recife' });
-                    const orderStr = new Date((order as any).created_at || order.timestamp).toLocaleDateString('pt-BR', { timeZone: 'America/Recife' });
-                    if (orderStr !== todayStr) return acc;
-                  }
+                  if (driver === 'Sem Motorista' && hiddenOrderIds.includes(order.id)) return acc;
                   if (!acc[driver]) acc[driver] = [];
                   acc[driver].push(order);
                 }
                 return acc;
-              }, {})
-            ).length > 0 ? (
-              Object.entries(
-                orders.reduce<Record<string, Order[]>>((acc, order) => {
-                  if (!['COMPLETED', 'DELIVERED', 'Entregue', 'CANCELLED', 'Cancelado'].includes(order.status)) {
-                    const driverId = (order as any).driver_id;
-                    const driver = order.driverName || (order as any).driver_name
-                      || (driverId ? driverNames[driverId] : null)
-                      || 'Sem Motorista';
-                    if (driver === 'Sem Motorista') {
-                      const todayStr = new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Recife' });
-                      const orderStr = new Date((order as any).created_at || order.timestamp).toLocaleDateString('pt-BR', { timeZone: 'America/Recife' });
-                      if (orderStr !== todayStr) return acc;
-                    }
-                    if (!acc[driver]) acc[driver] = [];
-                    acc[driver].push(order);
-                  }
-                  return acc;
-                }, {})
-              ).map(([driver, driverOrders]: [string, Order[]]) => (
+              }, {});
+              console.log('[Dashboard] Cards motoristas - grupos:', Object.keys(grouped).map(k => `${k}: ${grouped[k].length}`));
+              return Object.entries(grouped).length > 0 ? (
+              Object.entries(grouped).map(([driver, driverOrders]: [string, Order[]]) => (
                 <div key={driver} className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 space-y-4 hover:shadow-md transition-shadow w-[340px]">
                   <div className="flex items-center gap-3 border-b border-slate-50 pb-3">
                     <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center">
@@ -500,6 +498,15 @@ export function Dashboard() {
                             )}
                           </span>
                         </div>
+                        {driver === 'Sem Motorista' && (
+                          <button
+                            onClick={() => hideOrder(order.id)}
+                            className="p-1 hover:bg-red-100 rounded-full transition-colors shrink-0 ml-1"
+                            title="Ocultar deste card"
+                          >
+                            <X className="w-3 h-3 text-red-400 hover:text-red-600" />
+                          </button>
+                        )}
                         <span className={cn(
                           "text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-tighter shrink-0 ml-2",
                           ['IN PROGRESS','IN_PROGRESS','IN_TRANSIT','ACCEPTED'].includes(order.status) ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-500"
@@ -515,7 +522,7 @@ export function Dashboard() {
               <div className="bg-white p-8 rounded-2xl border border-dashed border-slate-200 text-center">
                 <p className="text-xs text-on-surface-variant italic font-medium">Nenhuma rota ativa no momento.</p>
               </div>
-            )}
+            )})()}
           </div>
         </div>
       </div>
