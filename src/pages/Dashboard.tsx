@@ -100,10 +100,12 @@ export function Dashboard() {
           });
           setDriverDaySchedules(grouped);
           
-          // Buscar pedidos vinculados: busca TODOS os pedidos recentes e faz match pelo nome do ponto
+          // Buscar pedidos vinculados: pedidos mais recentes da mesma região
           const { data: allOrdersData } = await supabase
             .from('orders')
             .select('*')
+            .eq('region', region)
+            .order('created_at', { ascending: false })
             .limit(2000);
           
           if (allOrdersData && allOrdersData.length > 0) {
@@ -383,7 +385,11 @@ export function Dashboard() {
                                   <p className="text-[9px] font-bold text-slate-500 uppercase">{pts.length} parada{pts.length > 1 ? 's' : ''}</p>
                                   {pts.map((point: any, idx: number) => {
                                     const name = typeof point === 'string' ? point : point.name;
-                                    const pointOrder = orders.find((o: Order) => o.pointName === name || (o as any).point_name === name);
+                                    const pointOrder = orders.find((o: Order) => {
+                                      const orderPoint = (o.pointName || (o as any).point_name || '').toLowerCase().trim();
+                                      const pointName = (name || '').toLowerCase().trim();
+                                      return orderPoint && pointName && (orderPoint.includes(pointName) || pointName.includes(orderPoint));
+                                    });
                                     return (
                                       <div key={idx} className="flex items-center justify-between gap-2">
                                         <div className="flex items-center gap-1.5 min-w-0 flex-1">
@@ -398,10 +404,11 @@ export function Dashboard() {
                                         {pointOrder && (
                                           <button
                                             onClick={() => setSelectedOrderForModal(pointOrder)}
-                                            className="p-1 hover:bg-[#7B2D3B]/10 rounded-full transition-colors shrink-0"
-                                            title="Gerar PDF do pedido"
+                                            className="px-2 py-1 bg-[#7B2D3B]/10 hover:bg-[#7B2D3B]/20 rounded-lg transition-colors shrink-0 flex items-center gap-1"
+                                            title="Ver Guia/PDF do pedido"
                                           >
-                                            <Camera className="w-3.5 h-3.5 text-[#7B2D3B]" />
+                                            <FileText className="w-3 h-3 text-[#7B2D3B]" />
+                                            <span className="text-[9px] font-bold text-[#7B2D3B]">PDF</span>
                                           </button>
                                         )}
                                       </div>
