@@ -290,9 +290,10 @@ export function normalizeStorageUrl(url: string | null | undefined): string {
   if (!isLocalDev && url.includes('72.60.61.216:8000')) {
     return url.replace(/^https?:\/\/72\.60\.61\.216:8000/, '/supabase');
   }
-  // Converter URLs do domínio motorista para o proxy do administrativo
-  if (!isLocalDev && url.includes('motorista.sk4r4n70.cloud/api/supabase')) {
-    return url.replace(/^https?:\/\/motorista\.sk4r4n70\.cloud\/api\/supabase/, '/supabase');
+  // Converter QUALQUER domínio externo com /api/supabase para o proxy local /supabase
+  // (cobre domínio fixo motorista.sk4r4n70.cloud E qualquer URL dinâmica de Vercel)
+  if (!isLocalDev && /^https?:\/\/[^/]+\/api\/supabase/.test(url)) {
+    return url.replace(/^https?:\/\/[^/]+\/api\/supabase/, '/supabase');
   }
   // Converter URLs do domínio API direto
   if (!isLocalDev && url.includes('api.sk4r4n70.cloud')) {

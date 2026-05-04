@@ -870,14 +870,7 @@ export function Vehicles() {
 
   const stats = useMemo(() => ({
     total: vehicles.length,
-    maintenance: vehicles.filter(v => {
-      // Só contar como manutenção se os alvos estiverem configurados (veículos V1 podem não ter)
-      const hasOilTarget = v.next_oil_change_km != null;
-      const hasRevTarget = v.next_revision_km != null;
-      const oilRemaining = hasOilTarget ? v.next_oil_change_km! - (v.current_km ?? 0) : Infinity;
-      const revRemaining = hasRevTarget ? v.next_revision_km! - (v.current_km ?? 0) : Infinity;
-      return oilRemaining <= 500 || revRemaining <= 1000;
-    }).length,
+    maintenance: vehicles.filter(v => v.status === 'Manutenção').length,
   }), [vehicles]);
 
   const handleDelete = async (id: string) => {
