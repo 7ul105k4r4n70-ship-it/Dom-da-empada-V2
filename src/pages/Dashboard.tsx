@@ -28,13 +28,8 @@ export function Dashboard() {
   // Estado para modal de detalhes do pedido
   const [selectedOrderForModal, setSelectedOrderForModal] = useState<Order | null>(null);
   
-  // Estado para pedidos ocultos do card "Sem Motorista"
-  const [hiddenOrderIds, setHiddenOrderIds] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('dashboard_hidden_orders');
-      return saved ? JSON.parse(saved) : [];
-    } catch { return []; }
-  });
+  // IDs sendo excluídos (para feedback imediato na UI)
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -448,10 +443,18 @@ export function Dashboard() {
             {/* Motoristas: todos os pedidos deles. Sem Motorista: TODOS os pedidos nao selecionados */}
             {(() => {
               const doneStatuses = ['completed', 'delivered', 'entregue', 'cancelled', 'cancelado', 'closed', 'fechado'];
-              const hideOrder = (id: string) => {
-                const newHidden = [...hiddenOrderIds, id];
-                setHiddenOrderIds(newHidden);
-                localStorage.setItem('dashboard_hidden_orders', JSON.stringify(newHidden));
+              const deleteOrder = async (id: string) => {
+                // Feedback imediato: remove da UI antes de confirmar no banco
+                setOrders(prev => prev.filter(o => o.id !== id));
+                setDeletingIds(prev => { const s = new Set(prev); s.add(id); return s; });
+                try {
+                  const { error } = await supabase.from('orders').delete().eq('id', id);
+                  if (error) console.error('[Dashboard] Erro ao excluir pedido:', error.message);
+                } catch (err) {
+                  console.error('[Dashboard] Falha ao excluir pedido:', err);
+                } finally {
+                  setDeletingIds(prev => { const s = new Set(prev); s.delete(id); return s; });
+                }
               };
               const grouped = orders.reduce<Record<string, Order[]>>((acc, order) => {
                 const statusLower = (order.status || '').toLowerCase();
@@ -461,7 +464,6 @@ export function Dashboard() {
                   const driver = order.driverName || (order as any).driver_name
                     || (driverId ? driverNames[driverId] : null)
                     || 'Sem Motorista';
-                  if (driver === 'Sem Motorista' && hiddenOrderIds.includes(order.id)) return acc;
                   if (!acc[driver]) acc[driver] = [];
                   acc[driver].push(order);
                 }
@@ -500,9 +502,10 @@ export function Dashboard() {
                         </div>
                         {driver === 'Sem Motorista' && (
                           <button
-                            onClick={() => hideOrder(order.id)}
-                            className="p-1 hover:bg-red-100 rounded-full transition-colors shrink-0 ml-1"
-                            title="Ocultar deste card"
+                            onClick={() => deleteOrder(order.id)}
+                            disabled={deletingIds.has(order.id)}
+                            className="p-1 hover:bg-red-100 rounded-full transition-colors shrink-0 ml-1 disabled:opacity-40"
+                            title="Excluir permanentemente"
                           >
                             <X className="w-3 h-3 text-red-400 hover:text-red-600" />
                           </button>

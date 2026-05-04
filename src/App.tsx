@@ -6,7 +6,7 @@ import { Login } from '@/pages/Login';
 import { Dashboard } from '@/pages/Dashboard';
 import { type Region } from '@/types';
 import { supabase } from '@/supabase';
-import { ShieldX, LogOut, Truck, RefreshCw, AlertTriangle } from 'lucide-react';
+import { LogOut, RefreshCw, AlertTriangle } from 'lucide-react';
 import { RegionProvider } from '@/context/RegionContext';
 import { cn } from '@/lib/utils';
 
@@ -107,63 +107,6 @@ function ErrorFallback({ error }: { error?: Error }) {
   );
 }
 
-// Tela de bloqueio para motoristas
-function MotoristaBlocked({ onLogout }: { onLogout: () => void }) {
-  return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 p-8">
-      <div className="max-w-md w-full bg-white rounded-3xl shadow-xl border border-slate-100 overflow-hidden">
-        <div className="h-2 bg-gradient-to-r from-primary to-red-700" />
-        <div className="p-10 flex flex-col items-center text-center gap-6">
-          <div className="w-20 h-20 rounded-2xl bg-red-50 flex items-center justify-center">
-            <Truck className="w-10 h-10 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-black text-on-surface">Acesso Restrito</h1>
-            <p className="text-on-surface-variant text-sm mt-3 leading-relaxed">
-              O <strong>Portal Administrativo</strong> é exclusivo para
-              administradores e usuários do sistema.
-            </p>
-            <p className="text-on-surface-variant text-sm mt-2 leading-relaxed">
-              Motoristas devem usar o <strong>App Mobile Dom da Empada</strong>
-              para registrar entregas e checklists.
-            </p>
-          </div>
-          <button
-            onClick={onLogout}
-            className="flex items-center gap-2 px-8 py-4 bg-primary text-white rounded-2xl font-bold text-sm shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all w-full justify-center"
-          >
-            <LogOut className="w-4 h-4" />
-            Sair e Voltar ao Login
-          </button>
-        </div>
-      </div>
-      <p className="text-[10px] text-slate-400 mt-6">© 2026 Dom da Empada Franquias</p>
-    </div>
-  );
-}
-
-// Componente de rota protegida — apenas administradores
-function AdminRoute({ isAdmin, loading, children }: { isAdmin: boolean; loading: boolean; children: React.ReactNode }) {
-  if (loading) return null;
-  if (!isAdmin) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-6 text-center">
-        <div className="w-20 h-20 rounded-2xl bg-red-100 flex items-center justify-center">
-          <ShieldX className="w-10 h-10 text-red-500" />
-        </div>
-        <div>
-          <h2 className="text-2xl font-black text-on-surface mb-2">Acesso Restrito</h2>
-          <p className="text-on-surface-variant text-sm max-w-xs">
-            Apenas <strong>administradores</strong> podem acessar a página de usuários.
-          </p>
-        </div>
-        <Navigate to="/" replace />
-      </div>
-    );
-  }
-  return <>{children}</>;
-}
-
 // Timeout adaptativo: mais curto em localhost para nao travar a UI
 const getRoleTimeout = () =>
   !import.meta.env.PROD && window.location.hostname === 'localhost' ? 5000 : 15000;
@@ -208,7 +151,20 @@ export default function App() {
         return;
       }
 
-      // Sessao persistente — busca por pattern no localStorage (zero rede)
+      // Sessao portal customizada (sem JWT Auth — usa anon key para queries)
+      const portalEmail = localStorage.getItem('portal_user_email');
+      if (portalEmail) {
+        console.log('[App] Sessao portal encontrada:', portalEmail);
+        if (!cancelled) {
+          setUser({ email: portalEmail, id: 'portal-user' });
+          setUserRole(localStorage.getItem('portal_user_role'));
+          setLoading(false);
+          setRoleLoading(false);
+        }
+        return;
+      }
+
+      // Sessao Supabase Auth legada — migrar para sessao portal e fazer sign out
       let cached: string | null = null;
       for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i) || '';
@@ -217,29 +173,39 @@ export default function App() {
           break;
         }
       }
-      console.log('[App] Sessao cached:', cached ? 'sim' : 'não');
+      console.log('[App] Sessao Auth legada:', cached ? 'sim' : 'não');
       if (!cached) {
         console.log('[App] Sem sessao - loading false');
         if (!cancelled) { setLoading(false); setRoleLoading(false); }
         return;
       }
 
-      // Tem sessao cached: mostrar UI imediatamente, role em background
-      setLoading(false);
+      // Manter loading=true durante migracao para evitar redirect indevido para /login
       try {
         const session = JSON.parse(cached);
-        if (!session?.user) { if (!cancelled) setRoleLoading(false); return; }
-        setUser({ id: session.user.id, email: session.user.email });
+        if (!session?.user) { if (!cancelled) { setLoading(false); setRoleLoading(false); } return; }
+        const email = session.user.email;
 
-        // Fetch role com timeout adaptativo (mais curto em localhost)
+        // Fetch role (enquanto ainda tem JWT ativo)
         const roleP = supabase.from('app_users').select('role').eq('auth_uid', session.user.id).single() as any;
         const timeoutP = new Promise<{ data: any }>(r => setTimeout(() => r({ data: null }), getRoleTimeout()));
         const { data } = await Promise.race([roleP, timeoutP]);
-        if (!cancelled) setUserRole(data?.role ?? null);
+        const role = data?.role ?? null;
+
+        // Migrar para sessao portal e remover JWT (restaura anon key para queries)
+        localStorage.setItem('portal_user_email', email || '');
+        localStorage.setItem('portal_user_role', role || '');
+        await supabase.auth.signOut({ scope: 'local' });
+
+        if (!cancelled) {
+          setUser({ id: session.user.id, email });
+          setUserRole(role);
+          setLoading(false);
+          setRoleLoading(false);
+        }
       } catch {
-        if (!cancelled) setUserRole(null);
+        if (!cancelled) { setUserRole(null); setLoading(false); setRoleLoading(false); }
       }
-      if (!cancelled) setRoleLoading(false);
     };
 
     init();
@@ -283,20 +249,7 @@ export default function App() {
     return <Navigate to="/" />;
   }
 
-  // ── Bloquear motoristas: não têm acesso ao portal administrativo ──
-  if (user && userRole === 'motorista') {
-    const handleLogoutMotorista = async () => {
-      await supabase.auth.signOut();
-      localStorage.removeItem('admin_master_auth');
-      // Limpar tokens de sessão
-      for (let i = localStorage.length - 1; i >= 0; i--) {
-        const k = localStorage.key(i) || '';
-        if (k.startsWith('sb-')) localStorage.removeItem(k);
-      }
-      window.location.href = '/login';
-    };
-    return <MotoristaBlocked onLogout={handleLogoutMotorista} />;
-  }
+  // Todos os usuarios tem acesso total ao portal - sem restricoes por role
 
   if (location.pathname === '/login') {
     return <Login onLogin={async () => {
@@ -308,15 +261,25 @@ export default function App() {
         setRoleLoading(false);
         return;
       }
-      // Login normal — usar getSession() para evitar race condition com localStorage
+      // Login normal — capturar sessao, salvar como portal session e fazer sign out do JWT
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (session?.user) {
-          setUser(session.user);
+          const email = session.user.email;
           const roleP = supabase.from('app_users').select('role').eq('auth_uid', session.user.id).single() as any;
           const timeoutP = new Promise<{ data: any }>(r => setTimeout(() => r({ data: null }), getRoleTimeout()));
           const { data } = await Promise.race([roleP, timeoutP]);
-          setUserRole(data?.role ?? null);
+          const role = data?.role ?? null;
+
+          // Salvar sessao portal customizada
+          localStorage.setItem('portal_user_email', email || '');
+          localStorage.setItem('portal_user_role', role || '');
+
+          // Sign out local — remove JWT e restaura anon key para queries (sem RLS 401)
+          await supabase.auth.signOut({ scope: 'local' });
+
+          setUser({ email, id: session.user.id });
+          setUserRole(role);
         } else {
           console.warn('[App] getSession() retornou sem usuário após login');
         }
@@ -332,7 +295,7 @@ export default function App() {
     <RegionProvider>
       <div className="min-h-screen bg-background">
         <Sidebar 
-          adminAuth={userRole === 'admin' && !user?.email?.includes('@')}
+          adminAuth={userRole === 'admin' || localStorage.getItem('admin_master_auth') === 'true'}
           mobileOpen={mobileSidebarOpen}
           onClose={() => setMobileSidebarOpen(false)}
         />
@@ -355,7 +318,7 @@ export default function App() {
                 <Route path="/transfer" element={<Transfer />} />
                 <Route path="/finance" element={<Finance />} />
                 <Route path="/extras" element={<ExtraDeliveries />} />
-                <Route path="/users" element={<Users />} />
+                <Route path="/users" element={userRole === 'admin' || localStorage.getItem('admin_master_auth') === 'true' ? <Users /> : <Navigate to="/" replace />} />
                 <Route path="/vehicles" element={<Vehicles />} />
                 <Route path="/franqueados" element={<Franqueados />} />
                 <Route path="/profile" element={<Profile />} />

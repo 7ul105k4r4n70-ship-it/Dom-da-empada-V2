@@ -32,7 +32,7 @@ const navItems = [
   { icon: Store, label: 'Franqueados', path: '/franqueados' },
   { icon: PackageSearch, label: 'Entregas Extras', path: '/extras' },
   { icon: Car, label: 'Veículos', path: '/vehicles' },
-  { icon: Users, label: 'Usuários', path: '/users' },
+  { icon: Users, label: 'Usuários', path: '/users', adminOnly: true },
 ];
 
 export function Sidebar({ 
@@ -78,6 +78,8 @@ export function Sidebar({
     try {
       // Limpar todas as chaves de autenticação e dados da sessão
       localStorage.removeItem('admin_master_auth');
+      localStorage.removeItem('portal_user_email');
+      localStorage.removeItem('portal_user_role');
       
       // Limpar pedidos ativos e dados relacionados
       localStorage.removeItem('active_orders');
@@ -126,7 +128,7 @@ export function Sidebar({
           <p className="text-[10px] uppercase tracking-widest text-on-surface-variant/60 font-bold hidden xl:block">A Melhor Empada do Brasil</p>
         </div>
         <nav className="flex-1 space-y-1 overflow-y-auto">
-          {navItems.map((item) => (
+          {navItems.filter(item => !item.adminOnly || adminAuth).map((item) => (
             <NavLink
               key={item.path}
               to={item.path}
@@ -171,7 +173,7 @@ export function Sidebar({
           <p className="text-[10px] uppercase tracking-widest text-on-surface-variant/60 font-bold">A Melhor Empada do Brasil</p>
         </div>
         <nav className="flex-1 space-y-1 overflow-y-auto">
-          {navItems.map((item) => (
+          {navItems.filter(item => !item.adminOnly || adminAuth).map((item) => (
             <NavLink
               key={item.path}
               to={item.path}

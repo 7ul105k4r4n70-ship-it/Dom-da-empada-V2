@@ -56,13 +56,15 @@ export function Profile() {
         return;
       }
 
-      // ── Caminho 2: Sessão ativa no Supabase Auth ─────────────────
-      let userEmail: string | null = null;
+      // ── Caminho 2: Sessão portal customizada (sem JWT Auth) ──────
+      let userEmail: string | null = localStorage.getItem('portal_user_email');
 
-      // Tenta pelo getSession() primeiro (mais confiável)
-      const { data: sessionData } = await supabase.auth.getSession();
-      if (sessionData?.session?.user?.email) {
-        userEmail = sessionData.session.user.email;
+      // ── Caminho 3: Sessão ativa no Supabase Auth ──────────────────
+      if (!userEmail) {
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (sessionData?.session?.user?.email) {
+          userEmail = sessionData.session.user.email;
+        }
       }
 
       // Fallback: scan do localStorage (sessão persistida)
