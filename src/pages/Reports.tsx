@@ -196,12 +196,19 @@ export function Reports() {
   const [ordersWithExtra, setOrdersWithExtra] = useState<Set<string>>(new Set());
   const [extrasLoaded, setExtrasLoaded] = useState(false);
 
+  // Paginação — 20 relatórios por página
+  const ITEMS_PER_PAGE = 20;
+  const [currentPage, setCurrentPage] = useState(1);
+
   // Persistir filtro Entregas Extras no localStorage
   useEffect(() => {
     try {
       localStorage.setItem('reports_filter_entrega_extra', filterEntregaExtra ? 'true' : 'false');
     } catch { /* ignore */ }
   }, [filterEntregaExtra]);
+
+  // Resetar página ao mudar filtros ou região
+  useEffect(() => { setCurrentPage(1); }, [region, filterStartDate, filterEndDate, filterPoint, filterMotorista, filterEntregaExtra]);
 
   // Persistir orderExtras no localStorage
   useEffect(() => {
@@ -1545,7 +1552,7 @@ export function Reports() {
               </>
             )}
           </div>
-        ) : orders.map(order => {
+        ) : orders.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE).map(order => {
           const isExpanded = expandedOrderId === order.id;
           const data = expandedData[order.id];
           const isLoadingExp = loadingExpandedId === order.id;
@@ -1900,8 +1907,31 @@ export function Reports() {
         })}
       </div>
 
+      {/* Paginação */}
+      {orders.length > ITEMS_PER_PAGE && (
+        <div className="flex items-center justify-center gap-3 py-4">
+          <button
+            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+            disabled={currentPage === 1}
+            className="px-4 py-2 text-xs font-bold rounded-lg bg-white border border-slate-200 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
+          >
+            ← Anterior
+          </button>
+          <span className="text-xs font-bold text-on-surface-variant">
+            Página <span className="text-primary">{currentPage}</span> de <span className="text-on-surface">{Math.ceil(orders.length / ITEMS_PER_PAGE)}</span>
+          </span>
+          <button
+            onClick={() => setCurrentPage(p => Math.min(Math.ceil(orders.length / ITEMS_PER_PAGE), p + 1))}
+            disabled={currentPage >= Math.ceil(orders.length / ITEMS_PER_PAGE)}
+            className="px-4 py-2 text-xs font-bold rounded-lg bg-white border border-slate-200 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
+          >
+            Próxima →
+          </button>
+        </div>
+      )}
+
       <div className="text-xs text-on-surface-variant p-2">
-        Exibindo <span className="font-bold text-green-600">{orders.length}</span> entregas confirmadas de <span className="font-bold text-on-surface">{allOrders.length}</span> pedidos totais · <span className="font-bold text-primary">⚠️ Dados exclusivos de {region}</span>
+        Exibindo <span className="font-bold text-green-600">{Math.min(currentPage * ITEMS_PER_PAGE, orders.length)}</span> de <span className="font-bold text-on-surface">{orders.length}</span> entregas confirmadas · <span className="font-bold text-primary">⚠️ Dados exclusivos de {region}</span>
       </div>
 
       {/* ── EDIT MODAL ── */}
