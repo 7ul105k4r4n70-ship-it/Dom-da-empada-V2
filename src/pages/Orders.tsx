@@ -50,14 +50,14 @@ export function Orders() {
     }, 'created_at', false, 1000, dateRange); // Limite de 1000 pedidos e aplica filtros de data
 
     const unsubDrivers = subscribeToTable('app_users', regionFilter, (data) => {
-      setDrivers(data.filter((u: User) => u.role === 'motorista'));
+      setDrivers(data.filter((u: any) => u.role === 'motorista' || u.role === 'driver'));
     }, 'created_at', false, 200); // Limite de 200 motoristas
 
     const locationChannel = supabase
       .channel('driver_gps_locations')
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'app_users' }, (payload) => {
         const updated = payload.new as any;
-        if (updated.role === 'motorista' && updated.lat != null && updated.lng != null) {
+        if ((updated.role === 'motorista' || updated.role === 'driver') && updated.lat != null && updated.lng != null) {
           setDrivers(prev => prev.map((d: any) =>
             d.id === updated.id
               ? { ...d, lat: updated.lat, lng: updated.lng, location_updated_at: updated.location_updated_at }
@@ -263,11 +263,20 @@ export function Orders() {
               region={region}
               heightClassName="h-[760px]"
             />
-            <div className="flex gap-4 mt-3 justify-center text-[10px] text-on-surface-variant">
+            <div className="flex gap-4 mt-3 justify-center text-[10px] text-on-surface-variant flex-wrap">
               <span>🔴 Pedido aguardando</span>
               <span>🟡 Em trânsito</span>
               <span>🟢 Entregue</span>
-              <span>🔵 Motorista</span>
+              <span>🔵 Motorista (GPS ativo)</span>
+              <span className="font-bold">
+                {(() => {
+                  const withGps = drivers.filter((d: any) => d.lat != null && d.lng != null).length;
+                  const total = drivers.length;
+                  return withGps > 0
+                    ? `✅ ${withGps}/${total} motorista(s) com localização`
+                    : `⚠️ ${total} motorista(s) cadastrado(s) — aguardando GPS`;
+                })()}
+              </span>
             </div>
           </div>
         ) : (
