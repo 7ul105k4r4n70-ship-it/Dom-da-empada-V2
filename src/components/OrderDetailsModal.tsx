@@ -490,21 +490,37 @@ export function OrderDetailsModal({ order, onClose }: OrderDetailsModalProps) {
     }
 
     try {
-      const { data: driverData, error } = await supabase
+      // Buscar driver_id pelo nome do motorista
+      const { data: driver, error: driverError } = await supabase
         .from('app_users')
-        .select('lat, lng')
-        .eq('name', dName)
-        .eq('role', 'motorista')
+        .select('id')
+        .ilike('name', dName)
+        .in('role', ['motorista', 'driver'])
         .maybeSingle();
 
-      if (error) {
-        console.error('Erro ao buscar localização do motorista:', error);
+      if (driverError || !driver) {
+        console.error('Erro ao buscar motorista:', driverError);
+        alert('Motorista não encontrado.');
+        return;
+      }
+
+      // Buscar localização mais recente em gps_tracking
+      const { data: gpsData, error: gpsError } = await supabase
+        .from('gps_tracking')
+        .select('lat, lng')
+        .eq('driver_id', driver.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (gpsError) {
+        console.error('Erro ao buscar localização GPS:', gpsError);
         alert('Erro ao buscar localização do motorista.');
         return;
       }
 
-      if (driverData?.lat && driverData?.lng) {
-        const url = `https://www.google.com/maps/search/?api=1&query=${driverData.lat},${driverData.lng}`;
+      if (gpsData?.lat && gpsData?.lng) {
+        const url = `https://www.google.com/maps/search/?api=1&query=${gpsData.lat},${gpsData.lng}`;
         window.open(url, '_blank');
       } else {
         alert('O motorista ainda não enviou sua localização GPS ou não está ativo no momento.');
