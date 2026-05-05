@@ -624,11 +624,24 @@ export function Schedule() {
                 {selectedTrip.points && selectedTrip.points.length > 0 && (
                   <div className="bg-white rounded-lg border border-slate-100 p-2 space-y-1.5">
                     {selectedTrip.points.map((point, idx) => {
-                      // Tentar encontrar o pedido para este ponto
-                      const pointOrder = tripOrders.find((o: any) => {
+                      // Tentar encontrar TODOS os pedidos para este ponto na data da viagem
+                      const normalizeString = (str: string) => {
+                        return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase().trim();
+                      };
+                      
+                      const ptName = (point.name || '').toLowerCase().trim();
+                      const normalizedPtName = normalizeString(ptName);
+                      
+                      const pointOrders = tripOrders.filter((o: any) => {
                         const orderPoint = (o.pointName || o.point_name || '').toLowerCase().trim();
-                        const ptName = (point.name || '').toLowerCase().trim();
-                        return orderPoint && ptName && orderPoint === ptName;
+                        const normalizedOrderPoint = normalizeString(orderPoint);
+                        const statusLower = (o.status || '').toLowerCase();
+                        
+                        // Apenas pedidos ativos (ignorando cancelados e os que já foram concluídos/entregues)
+                        const isDoneOrInvalid = ['cancelled', 'cancelado', 'deleted', 'excluido', 'completed', 'delivered', 'entregue', 'closed', 'fechado'].some(s => statusLower.includes(s));
+                        
+                        // Verifica se o nome bate e se o pedido é ativo
+                        return normalizedOrderPoint && normalizedPtName && normalizedOrderPoint === normalizedPtName && !isDoneOrInvalid;
                       });
 
                       return (
@@ -642,17 +655,23 @@ export function Schedule() {
                             </div>
                           </div>
                           
-                          {/* Botão PDF para o ponto - SÓ APARECE SE TIVER PEDIDO VINCULADO */}
-                          {pointOrder && (
-                            <button
-                              onClick={() => setSelectedOrder(pointOrder)}
-                              className="w-full py-1.5 px-3 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg flex items-center justify-center gap-2 transition-colors shadow-sm group/btn"
-                            >
-                              <FileText className="w-3.5 h-3.5 text-[#7B2D3B] group-hover/btn:scale-110 transition-transform" />
-                              <span className="text-[10px] font-bold text-slate-700">
-                                Ver Pedido #{(pointOrder as any).short_id || (pointOrder as any).id?.replace(/\D/g, '').substring(0,3) || '...'}
-                              </span>
-                            </button>
+                          {/* Botões PDF dos Pedidos (múltiplos se houver) */}
+                          {pointOrders.length > 0 && (
+                            <div className="space-y-1">
+                              {pointOrders.map((order: any, orderIdx: number) => (
+                                <button
+                                  key={order.id}
+                                  onClick={() => setSelectedOrder(order)}
+                                  className="w-full py-1.5 px-3 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg flex items-center justify-center gap-2 transition-colors shadow-sm group/btn"
+                                >
+                                  <FileText className="w-3.5 h-3.5 text-[#7B2D3B] group-hover/btn:scale-110 transition-transform" />
+                                  <span className="text-[10px] font-bold text-slate-700">
+                                    Pedido #{(order as any).short_id || (order as any).id?.replace(/\D/g, '').substring(0,3) || '...'}
+                                    {pointOrders.length > 1 && <span className="text-slate-400 ml-1">({orderIdx + 1}/{pointOrders.length})</span>}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
                           )}
                         </div>
                       );

@@ -407,7 +407,7 @@ export function Dashboard() {
                                   {pts.map((point: any, idx: number) => {
                                     const name = typeof point === 'string' ? point : point.name;
                                     
-                                    // NOVO CÓDIGO: Busca global nos pedidos ativos para encontrar o pedido do ponto
+                                    // NOVO CÓDIGO: Busca global nos pedidos ativos para encontrar TODOS os pedidos do ponto na data da viagem
                                     const ptName = (name || '').toLowerCase().trim();
                                     
                                     // Remove espaços em branco extras, acentos e pontuação para comparar
@@ -417,7 +417,8 @@ export function Dashboard() {
                                     
                                     const normalizedPtName = normalizeString(ptName);
                                     
-                                    const pointOrder = orders.find((o: Order) => {
+                                    // Filtrar pedidos do ponto (sem filtro de data por enquanto)
+                                    const pointOrders = orders.filter((o: Order) => {
                                         const orderPoint = (o.pointName || (o as any).point_name || '').toLowerCase().trim();
                                         const normalizedOrderPoint = normalizeString(orderPoint);
                                         const statusLower = (o.status || '').toLowerCase();
@@ -425,9 +426,14 @@ export function Dashboard() {
                                         // Apenas pedidos ativos (ignorando cancelados e os que já foram concluídos/entregues)
                                         const isDoneOrInvalid = ['cancelled', 'cancelado', 'deleted', 'excluido', 'completed', 'delivered', 'entregue', 'closed', 'fechado'].some(s => statusLower.includes(s));
                                         
-                                        // Verifica se o nome bate e se o pedido é um pedido ATIVO
+                                        // Debug logs
+                                        console.log('[Dashboard Debug] Ponto:', name, '| Pedido:', orderPoint, '| Normalizado Ponto:', normalizedPtName, '| Normalizado Pedido:', normalizedOrderPoint, '| Ativo:', !isDoneOrInvalid);
+                                        
+                                        // Verifica se o nome bate e se o pedido é ativo
                                         return normalizedOrderPoint && normalizedPtName && normalizedOrderPoint === normalizedPtName && !isDoneOrInvalid;
                                       });
+                                    
+                                    console.log('[Dashboard Debug] Total pedidos encontrados para ponto', name, ':', pointOrders.length);
 
                                     return (
                                       <div key={idx} className="flex flex-col gap-2">
@@ -441,17 +447,23 @@ export function Dashboard() {
                                           </div>
                                         </div>
 
-                                        {/* Botão PDF do Pedido */}
-                                        {pointOrder && (
-                                          <button
-                                            onClick={() => setSelectedOrderForModal(pointOrder)}
-                                            className="w-full py-1.5 px-3 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg flex items-center justify-center gap-2 transition-colors shadow-sm group/btn"
-                                          >
-                                            <FileText className="w-3.5 h-3.5 text-[#7B2D3B] group-hover/btn:scale-110 transition-transform" />
-                                            <span className="text-[10px] font-bold text-slate-700">
-                                              Ver Pedido #{(pointOrder as any).short_id || (pointOrder as any).id?.replace(/\D/g, '').substring(0,3) || '...'}
-                                            </span>
-                                          </button>
+                                        {/* Botões PDF dos Pedidos (múltiplos se houver) */}
+                                        {pointOrders.length > 0 && (
+                                          <div className="space-y-1">
+                                            {pointOrders.map((order: Order, orderIdx: number) => (
+                                              <button
+                                                key={order.id}
+                                                onClick={() => setSelectedOrderForModal(order)}
+                                                className="w-full py-1.5 px-3 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg flex items-center justify-center gap-2 transition-colors shadow-sm group/btn"
+                                              >
+                                                <FileText className="w-3.5 h-3.5 text-[#7B2D3B] group-hover/btn:scale-110 transition-transform" />
+                                                <span className="text-[10px] font-bold text-slate-700">
+                                                  Pedido #{(order as any).short_id || (order as any).id?.replace(/\D/g, '').substring(0,3) || '...'}
+                                                  {pointOrders.length > 1 && <span className="text-slate-400 ml-1">({orderIdx + 1}/{pointOrders.length})</span>}
+                                                </span>
+                                              </button>
+                                            ))}
+                                          </div>
                                         )}
                                       </div>
                                     );
