@@ -53,24 +53,56 @@ export function Orders() {
       setDrivers(data.filter((u: any) => u.role === 'motorista' || u.role === 'driver'));
     }, 'created_at', false, 200); // Limite de 200 motoristas
 
-    const locationChannel = supabase
-      .channel('driver_gps_locations')
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'app_users' }, (payload) => {
-        const updated = payload.new as any;
-        if ((updated.role === 'motorista' || updated.role === 'driver') && updated.lat != null && updated.lng != null) {
+    // Buscar localização GPS de gps_tracking para cada motorista
+    const fetchDriverLocations = async () => {
+      const { data: driversWithoutLoc } = await supabase
+        .from('app_users')
+        .select('id')
+        .in('role', ['motorista', 'driver']);
+      
+      if (!driversWithoutLoc) return;
+      
+      for (const driver of driversWithoutLoc) {
+        const { data: gpsData } = await supabase
+          .from('gps_tracking')
+          .select('lat, lng')
+          .eq('driver_id', driver.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        
+        if (gpsData?.lat && gpsData?.lng) {
           setDrivers(prev => prev.map((d: any) =>
-            d.id === updated.id
-              ? { ...d, lat: updated.lat, lng: updated.lng, location_updated_at: updated.location_updated_at }
+            d.id === driver.id
+              ? { ...d, lat: gpsData.lat, lng: gpsData.lng }
               : d
           ));
         }
+      }
+    };
+    
+    fetchDriverLocations();
+    // Atualizar localização a cada 30 segundos
+    const locationInterval = setInterval(fetchDriverLocations, 30000);
+
+    // Escutar novas inserções em gps_tracking
+    const gpsChannel = supabase
+      .channel('gps_tracking_updates')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'gps_tracking' }, (payload) => {
+        const newGps = payload.new as any;
+        setDrivers(prev => prev.map((d: any) =>
+          d.id === newGps.driver_id
+            ? { ...d, lat: newGps.lat, lng: newGps.lng }
+            : d
+        ));
       })
       .subscribe();
 
     return () => {
       unsubOrders();
       unsubDrivers();
-      supabase.removeChannel(locationChannel);
+      clearInterval(locationInterval);
+      supabase.removeChannel(gpsChannel);
     };
   }, [region, startDate, endDate]);
 
