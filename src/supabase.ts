@@ -114,12 +114,49 @@ export async function signUpWithEmail(email: string, password: string) {
  * Sem Supabase Auth — login é feito por nome + senha diretamente.
  */
 export async function setFranchiseePassword(franchiseeName: string, newPassword: string) {
+  // 1. Buscar o franqueado para obter id, auth_uid e email
+  const { data: user, error: findError } = await supabase
+    .from('app_users')
+    .select('id, auth_uid, email')
+    .ilike('name', franchiseeName)
+    .eq('role', 'franqueado')
+    .single();
+  if (findError || !user) throw findError || new Error('Franqueado não encontrado.');
+
+  // 2. Atualizar senha em app_users
   const { error } = await supabase
     .from('app_users')
     .update({ password: newPassword })
-    .ilike('name', franchiseeName)
-    .eq('role', 'franqueado');
+    .eq('id', user.id);
   if (error) throw error;
+
+  // 3. Atualizar senha no Supabase Auth
+  const admin = getSupabaseAdmin();
+  if (user.auth_uid) {
+    // Já temos o auth_uid — atualiza diretamente
+    await admin.auth.admin.updateUserById(user.auth_uid, { password: newPassword });
+  } else if (user.email) {
+    // Sem auth_uid — tenta criar usuário confirmado no Auth
+    const { data: created, error: createErr } = await admin.auth.admin.createUser({
+      email: user.email,
+      password: newPassword,
+      email_confirm: true,
+    });
+    if (createErr) {
+      // Usuário já existe no Auth — busca pelo email e atualiza
+      const { data: listData } = await admin.auth.admin.listUsers();
+      const authUser = (listData?.users || []).find((u: any) => u.email === user.email);
+      if (authUser) {
+        const { data: updData } = await admin.auth.admin.updateUserById(authUser.id, { password: newPassword });
+        if (updData?.user?.id) {
+          await supabase.from('app_users').update({ auth_uid: updData.user.id }).eq('id', user.id);
+        }
+      }
+    } else if (created?.user?.id) {
+      // Salvar auth_uid para uso futuro
+      await supabase.from('app_users').update({ auth_uid: created.user.id }).eq('id', user.id);
+    }
+  }
 }
 
 /**

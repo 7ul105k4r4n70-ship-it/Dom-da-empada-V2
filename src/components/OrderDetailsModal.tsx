@@ -42,6 +42,8 @@ export function OrderDetailsModal({ order, onClose }: OrderDetailsModalProps) {
   const [loadingPhoto, setLoadingPhoto] = useState(false);
   const [photoZoom, setPhotoZoom] = useState(1);
   const [photoRotation, setPhotoRotation] = useState(0);
+  const [observations, setObservations] = useState('');
+  const [savingObs, setSavingObs] = useState(false);
   const photoZoomRef = useRef(1);
   const photoRotationRef = useRef(0);
   const photoPositionRef = useRef({ x: 0, y: 0 });
@@ -452,6 +454,30 @@ export function OrderDetailsModal({ order, onClose }: OrderDetailsModalProps) {
     fetchPreview();
   }, [order?.id]);
 
+  // Carregar observações do pedido
+  useEffect(() => {
+    if (order) {
+      setObservations((order as any).observations || '');
+    }
+  }, [order]);
+
+  // Salvar observações no banco
+  const handleSaveObservations = async () => {
+    if (!order) return;
+    setSavingObs(true);
+    try {
+      const { error } = await supabase
+        .from('orders')
+        .update({ observations })
+        .eq('id', order.id);
+      if (error) throw error;
+    } catch (err: any) {
+      alert('Erro ao salvar observações: ' + err.message);
+    } finally {
+      setSavingObs(false);
+    }
+  };
+
   const handlePrintOrder = async () => {
     await generateOrderPdf('save');
   };
@@ -698,21 +724,36 @@ export function OrderDetailsModal({ order, onClose }: OrderDetailsModalProps) {
             </div>
 
             {/* Footer Actions */}
-            <div className="p-6 bg-white border-t border-slate-100 flex gap-3">
-              <button 
-                onClick={handlePrintOrder} 
-                className="flex-1 py-4 primary-gradient text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2"
-              >
-                <FileText className="w-4 h-4" />
-                Imprimir Guia
-              </button>
-              <button 
-                onClick={handleTrackRoute}
-                className="flex-1 py-4 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-slate-900/20 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2"
-              >
-                <Truck className="w-4 h-4" />
-                Acompanhar Rota
-              </button>
+            <div className="p-6 bg-white border-t border-slate-100 flex flex-col gap-4">
+              {/* Observações */}
+              <div>
+                <label className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider mb-2 block">Observações</label>
+                <textarea
+                  value={observations}
+                  onChange={(e) => setObservations(e.target.value)}
+                  onBlur={handleSaveObservations}
+                  placeholder="Adicione observações sobre este pedido..."
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none resize-none h-20"
+                  disabled={savingObs}
+                />
+                {savingObs && <p className="text-[10px] text-primary font-medium mt-1">Salvando...</p>}
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={handlePrintOrder}
+                  className="flex-1 py-4 primary-gradient text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2"
+                >
+                  <FileText className="w-4 h-4" />
+                  Imprimir Guia
+                </button>
+                <button
+                  onClick={handleTrackRoute}
+                  className="flex-1 py-4 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-slate-900/20 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2"
+                >
+                  <Truck className="w-4 h-4" />
+                  Acompanhar Rota
+                </button>
+              </div>
             </div>
           </motion.div>
         </div>

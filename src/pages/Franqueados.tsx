@@ -768,6 +768,44 @@ export function Franqueados() {
         initials: editForm.name.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2),
         points: editPoints,
       });
+      // Buscar app_users pelo nome (flexível) ou telefone
+      const normalizeName = (n: string) => n.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, '');
+      const targetNameNorm = normalizeName(editingFranchisee.name);
+      const { data: allUsers } = await supabase
+        .from('app_users')
+        .select('id, name, phone')
+        .eq('role', 'franqueado');
+      // Tenta encontrar por nome normalizado
+      let existingUser = allUsers?.find((u: any) => normalizeName(u.name) === targetNameNorm);
+      // Se não encontrou por nome, tenta por telefone (mais estável)
+      if (!existingUser && editingFranchisee.phone) {
+        const phoneNorm = editingFranchisee.phone.replace(/\D/g, '');
+        existingUser = allUsers?.find((u: any) => u.phone && u.phone.replace(/\D/g, '') === phoneNorm);
+      }
+      if (existingUser) {
+        // Atualizar nome, telefone e região — franqueado precisará logar com o novo nome
+        await supabase
+          .from('app_users')
+          .update({ name: editForm.name, phone: editForm.phone, region: editForm.region })
+          .eq('id', existingUser.id);
+        if (editForm.name.toLowerCase() !== editingFranchisee.name.toLowerCase()) {
+          alert(`Nome de login alterado de "${editingFranchisee.name}" para "${editForm.name}". O franqueado deve usar o novo nome para acessar o portal.`);
+        }
+      } else {
+        // Sem registro — criar acesso para este franqueado
+        const sanitizedName = editForm.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
+        const internalEmail = `${sanitizedName}.${Date.now()}@franquia.domempada.app`;
+        await insertRow('app_users', {
+          name: editForm.name,
+          phone: editForm.phone,
+          region: editForm.region,
+          role: 'franqueado',
+          status: 'Ativo',
+          email: internalEmail,
+          password: '',
+        });
+        alert(`Acesso criado para "${editForm.name}". Use "Redefinir Senha" para definir a senha de login.`);
+      }
       setEditingFranchisee(null);
     } catch (error: any) {
       alert(error.message || 'Erro ao salvar.');
