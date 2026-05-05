@@ -494,9 +494,8 @@ export function Reports() {
   // Calcular totais reais de unidades para todos os pedidos entregues
   useEffect(() => {
     const calculateAllTotals = async () => {
-      if (orders.length === 0) return;
-
-      const totals: Record<string, { units: number; value: number }> = {};
+      // Remover retorno precoce para zerar os totais quando orders estiver vazio
+      // Isso conserta o loading infinito se não houver pedidos na busca
       const catTotals: Record<string, { boxes: number; units: number; value: number }> = {
         'Empada Salgada': { boxes: 0, units: 0, value: 0 },
         'Empadas Doces': { boxes: 0, units: 0, value: 0 },
@@ -506,6 +505,14 @@ export function Reports() {
         'Entrega extra': { boxes: 0, units: 0, value: 0 },
         'Outros': { boxes: 0, units: 0, value: 0 },
       };
+
+      if (orders.length === 0) {
+        setCalculatedTotals({});
+        setReportCategoryTotals(catTotals);
+        return;
+      }
+
+      const totals: Record<string, { units: number; value: number }> = {};
 
       try {
         const orderIds = orders.map(o => o.id);

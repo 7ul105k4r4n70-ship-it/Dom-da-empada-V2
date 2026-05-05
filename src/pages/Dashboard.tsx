@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { TrendingUp, Truck, Clock, Package, Calendar, Navigation, MapPin, FileText, User, AlertTriangle, Camera, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import { cn } from '@/lib/utils';
@@ -46,10 +46,52 @@ export function Dashboard() {
     });
   }, []);
 
-  // Buscar agendamentos futuros (hoje em diante)
-  const [linkedOrders, setLinkedOrders] = useState<Record<string, Order[]>>({});
-  const [driverDaySchedules, setDriverDaySchedules] = useState<Record<string, typeof todaySchedules>>({});
-  
+  // driverDaySchedules calculado via useMemo (reativo a todaySchedules e orders)
+
+  // linkedOrders calculado dinamicamente via useMemo (sempre atualizado quando orders mudam)
+  const linkedOrders = useMemo(() => {
+    const map: Record<string, Order[]> = {};
+    todaySchedules.forEach((s: any) => {
+      const pointNames = (s.points || []).map((p: any) => (p.name || '').toLowerCase().trim()).filter(Boolean);
+      map[s.id] = orders.filter((o: any) => {
+        if ((s.order_ids || []).includes(o.id)) return true;
+        const orderPoint = (o.pointName || o.point_name || '').toLowerCase().trim();
+        return pointNames.some((pn: string) => {
+          if (!pn || !orderPoint) return false;
+          return orderPoint === pn; // Match exato
+        });
+      });
+    });
+    return map;
+  }, [orders, todaySchedules]);
+
+  // Agrupa agendamentos por motorista+data, ocultando apenas viagens DE HOJE cujos pedidos foram todos entregues
+  const driverDaySchedules = useMemo(() => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const deliveredStatuses = ['completed', 'delivered', 'entregue', 'conclu\u00edda', 'concluida', 'concluido', 'finalizado', 'done'];
+    const grouped: Record<string, typeof todaySchedules> = {};
+    todaySchedules.forEach((s: any) => {
+      // Sempre ocultar se o status do próprio agendamento for "concluída" etc.
+      const scheduleStatusLower = (s.status || '').toLowerCase();
+      const isScheduleDone = deliveredStatuses.some(st => scheduleStatusLower.includes(st));
+      if (isScheduleDone) return;
+      // Verificar pedidos entregues APENAS para agendamentos de hoje
+      const isToday = s.scheduled_date === todayStr;
+      if (isToday && (s.order_ids || []).length > 0) {
+        const linked = orders.filter((o: any) => (s.order_ids || []).includes(o.id));
+        const allDone = linked.length > 0 && linked.every((o: any) => {
+          const oStatus = (o.status || '').toLowerCase();
+          return deliveredStatuses.some(ds => oStatus.includes(ds));
+        });
+        if (allDone) return;
+      }
+      const key = `${s.driver || 'Sem motorista'}|${s.scheduled_date}`;
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(s);
+    });
+    return grouped;
+  }, [todaySchedules, orders]);
+
   useEffect(() => {
     const fetchSchedules = async () => {
       try {
@@ -60,7 +102,7 @@ export function Dashboard() {
           .gte('scheduled_date', todayStr)
           .order('scheduled_date', { ascending: true })
           .order('scheduled_time', { ascending: true });
-        
+
         if (!error && data) {
           const schedules = data.map((s: any) => {
             let parsedPoints: Array<{ id: string; name: string; region: string }> | undefined;
@@ -87,45 +129,10 @@ export function Dashboard() {
               stops_count: s.stops_count || 1,
               order_ids: s.order_ids || [],
               points: parsedPoints,
+              status: s.status || '',
             };
           });
           setTodaySchedules(schedules);
-          
-          // Agrupar por motorista + data
-          const grouped: Record<string, typeof schedules> = {};
-          schedules.forEach((s: any) => {
-            const key = `${s.driver || 'Sem motorista'}|${s.scheduled_date}`;
-            if (!grouped[key]) grouped[key] = [];
-            grouped[key].push(s);
-          });
-          setDriverDaySchedules(grouped);
-          
-          // Buscar pedidos vinculados: pedidos mais recentes da mesma região
-          const { data: allOrdersData } = await supabase
-            .from('orders')
-            .select('*')
-            .eq('region', region)
-            .order('created_at', { ascending: false })
-            .limit(2000);
-          
-          if (allOrdersData && allOrdersData.length > 0) {
-            const ordersMap: Record<string, Order[]> = {};
-            schedules.forEach((s: any) => {
-              const pointNames = (s.points || []).map((p: any) => (p.name || '').toLowerCase().trim()).filter(Boolean);
-              ordersMap[s.id] = allOrdersData.filter((o: any) => {
-                // Por order_ids
-                if ((s.order_ids || []).includes(o.id)) return true;
-                // Ou por nome do ponto (match parcial)
-                const orderPoint = (o.pointName || o.point_name || '').toLowerCase().trim();
-                return pointNames.some((pn: string) => {
-                  if (!pn || !orderPoint) return false;
-                  return orderPoint.includes(pn) || pn.includes(orderPoint);
-                });
-              });
-            });
-            console.log('Dashboard - pedidos encontrados:', ordersMap);
-            setLinkedOrders(ordersMap);
-          }
         }
       } catch (e) {
         console.error('Erro ao buscar agendamentos:', e);
@@ -135,6 +142,44 @@ export function Dashboard() {
     const interval = setInterval(fetchSchedules, 300000);
     return () => clearInterval(interval);
   }, [region]);
+
+  // Buscar pedido pelo nome do ponto e abrir modal PDF
+  const handleOpenPdfForPoint = async (pointName: string) => {
+    const normalized = pointName.toLowerCase().trim();
+    if (!normalized) return;
+    try {
+      // Buscar pedido mais recente com este ponto
+      const { data } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('region', region)
+        .or(`pointName.ilike.%${pointName}%,point_name.ilike.%${pointName}%`)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      if (data && data.length > 0) {
+        setSelectedOrderForModal(data[0] as Order);
+      } else {
+        // Fallback: busca parcial
+        const { data: fallback } = await supabase
+          .from('orders')
+          .select('*')
+          .eq('region', region)
+          .order('created_at', { ascending: false })
+          .limit(50);
+        const matched = (fallback || []).find((o: any) => {
+          const pn = (o.pointName || o.point_name || '').toLowerCase().trim();
+          return pn.includes(normalized) || normalized.includes(pn);
+        });
+        if (matched) {
+          setSelectedOrderForModal(matched as Order);
+        } else {
+          alert('Nenhum pedido encontrado para este ponto. Crie o pedido em "Gestão de Pedidos" primeiro.');
+        }
+      }
+    } catch (e) {
+      console.error('[Dashboard] Erro ao buscar pedido do ponto:', e);
+    }
+  };
 
   const getTimeStatus = () => {
     const now = currentTime;
@@ -285,31 +330,11 @@ export function Dashboard() {
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-xs text-on-surface-variant">Pendentes</span>
-                <span className="text-lg font-black text-amber-500">{todayOrders.filter(o => !['COMPLETED', 'DELIVERED', 'Entregue', 'CANCELLED', 'Cancelado'].includes(o.status) && !!(o.driver_name || (o as any).driverName || (o as any).driver_id)).length}</span>
+                <span className="text-lg font-black text-amber-500">{orders.filter(o => ['IN_PROGRESS', 'IN PROGRESS', 'ACCEPTED'].includes(o.status)).length}</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-xs text-on-surface-variant">Sem Motorista</span>
                 <span className="text-lg font-black text-red-500">{orders.filter(o => !['COMPLETED', 'DELIVERED', 'Entregue', 'CANCELLED', 'Cancelado'].includes(o.status) && !(o.driver_name || (o as any).driverName || (o as any).driver_id)).length}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Entregas em Viagem */}
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col justify-between min-h-[180px]">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-on-surface-variant uppercase tracking-wider">Em Viagem</span>
-              <div className="w-8 h-8 bg-secondary/10 rounded-lg flex items-center justify-center">
-                <Truck className="w-4 h-4 text-secondary" />
-              </div>
-            </div>
-            <div className="space-y-3">
-              <div className="flex justify-between items-center">
-                <span className="text-xs text-on-surface-variant">Entregues</span>
-                <span className="text-lg font-black text-secondary">{orders.filter(o => ['COMPLETED', 'DELIVERED', 'Entregue'].includes(o.status)).length}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-xs text-on-surface-variant">Pendentes</span>
-                <span className="text-lg font-black text-amber-500">{orders.filter(o => ['IN_PROGRESS', 'IN PROGRESS', 'ACCEPTED'].includes(o.status)).length}</span>
               </div>
             </div>
           </div>
@@ -351,7 +376,7 @@ export function Dashboard() {
                   <div className="p-3 flex-1">
                     <div className="space-y-2 flex-1 overflow-y-auto max-h-[240px] pr-1">
                       {(daySchedules as any).map((schedule: any) => {
-                        const orders = linkedOrders[schedule.id] || [];
+                        const scheduleOrders = linkedOrders[schedule.id] || [];
                         return (
                           <div key={schedule.id} className="bg-slate-50 rounded-xl p-2.5 border border-slate-100">
                             <div className="flex items-start justify-between mb-1.5">
@@ -366,18 +391,14 @@ export function Dashboard() {
                               )}
                             </div>
                             <p className="text-[10px] text-slate-600 mb-1">{schedule.vehicle || 'Sem veículo'}</p>
-                            
+
                             {/* Pontos de entrega */}
                             {(() => {
-                              // Tentar obter pontos de vÃ¡rias fontes
                               let pts: Array<{name: string; region?: string}> = [];
                               if (schedule.points && schedule.points.length > 0) {
                                 pts = schedule.points;
                               } else if (schedule.location) {
                                 pts = schedule.location.split(/\s*[â†’â†’>]+\s*/).filter((s: string) => s.trim()).map((name: string) => ({ name: name.trim() }));
-                              }
-                              if (pts.length === 0 && orders.length > 0) {
-                                pts = orders.map((o: Order) => ({ name: o.pointName || (o as any).point_name || 'Ponto desconhecido' }));
                               }
                               if (pts.length === 0) return null;
                               return (
@@ -385,13 +406,31 @@ export function Dashboard() {
                                   <p className="text-[9px] font-bold text-slate-500 uppercase">{pts.length} parada{pts.length > 1 ? 's' : ''}</p>
                                   {pts.map((point: any, idx: number) => {
                                     const name = typeof point === 'string' ? point : point.name;
+                                    
+                                    // NOVO CÓDIGO: Busca global nos pedidos ativos para encontrar o pedido do ponto
+                                    const ptName = (name || '').toLowerCase().trim();
+                                    
+                                    // Remove espaços em branco extras, acentos e pontuação para comparar
+                                    const normalizeString = (str: string) => {
+                                      return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase().trim();
+                                    };
+                                    
+                                    const normalizedPtName = normalizeString(ptName);
+                                    
                                     const pointOrder = orders.find((o: Order) => {
-                                      const orderPoint = (o.pointName || (o as any).point_name || '').toLowerCase().trim();
-                                      const pointName = (name || '').toLowerCase().trim();
-                                      return orderPoint && pointName && (orderPoint.includes(pointName) || pointName.includes(orderPoint));
-                                    });
+                                        const orderPoint = (o.pointName || (o as any).point_name || '').toLowerCase().trim();
+                                        const normalizedOrderPoint = normalizeString(orderPoint);
+                                        const statusLower = (o.status || '').toLowerCase();
+                                        
+                                        // Apenas pedidos ativos (ignorando cancelados e os que já foram concluídos/entregues)
+                                        const isDoneOrInvalid = ['cancelled', 'cancelado', 'deleted', 'excluido', 'completed', 'delivered', 'entregue', 'closed', 'fechado'].some(s => statusLower.includes(s));
+                                        
+                                        // Verifica se o nome bate e se o pedido é um pedido ATIVO
+                                        return normalizedOrderPoint && normalizedPtName && normalizedOrderPoint === normalizedPtName && !isDoneOrInvalid;
+                                      });
+
                                     return (
-                                      <div key={idx} className="flex items-center justify-between gap-2">
+                                      <div key={idx} className="flex flex-col gap-2">
                                         <div className="flex items-center gap-1.5 min-w-0 flex-1">
                                           <span className="w-4 h-4 rounded-full bg-[#7B2D3B]/10 text-[#7B2D3B] flex items-center justify-center text-[8px] font-bold shrink-0">
                                             {idx + 1}
@@ -401,14 +440,17 @@ export function Dashboard() {
                                             {point.region && <p className="text-[9px] text-slate-500">{point.region}</p>}
                                           </div>
                                         </div>
+
+                                        {/* Botão PDF do Pedido */}
                                         {pointOrder && (
                                           <button
                                             onClick={() => setSelectedOrderForModal(pointOrder)}
-                                            className="px-2 py-1 bg-[#7B2D3B]/10 hover:bg-[#7B2D3B]/20 rounded-lg transition-colors shrink-0 flex items-center gap-1"
-                                            title="Ver Guia/PDF do pedido"
+                                            className="w-full py-1.5 px-3 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg flex items-center justify-center gap-2 transition-colors shadow-sm group/btn"
                                           >
-                                            <FileText className="w-3 h-3 text-[#7B2D3B]" />
-                                            <span className="text-[9px] font-bold text-[#7B2D3B]">PDF</span>
+                                            <FileText className="w-3.5 h-3.5 text-[#7B2D3B] group-hover/btn:scale-110 transition-transform" />
+                                            <span className="text-[10px] font-bold text-slate-700">
+                                              Ver Pedido #{(pointOrder as any).short_id || (pointOrder as any).id?.replace(/\D/g, '').substring(0,3) || '...'}
+                                            </span>
                                           </button>
                                         )}
                                       </div>
@@ -490,42 +532,52 @@ export function Dashboard() {
                     </div>
                   </div>
                   
-                  <div className="space-y-3">
-                    {driverOrders.map((order) => (
-                      <div key={order.id} className="flex items-center justify-between group pl-2 border-l-2 border-slate-100 hover:border-primary transition-colors py-0.5">
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-xs font-bold text-on-surface group-hover:text-primary transition-colors leading-tight">
-                            {(order as any).point_name || order.pointName || 'Desconhecido'}
-                          </span>
-                          <span className="text-[9px] text-on-surface-variant font-medium">
-                            {order.vehicle || 'Sem veículo'}
-                            {!['IN PROGRESS','IN_PROGRESS','IN_TRANSIT','ACCEPTED'].includes(order.status) && (
-                              <>
-                                {' · '}
-                                {new Date((order as any).created_at || order.timestamp).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: 'America/Recife' })}
-                              </>
+                    <div className="space-y-3">
+                      {driverOrders.map((order) => (
+                        <div 
+                          key={order.id} 
+                          onClick={() => setSelectedOrderForModal(order)}
+                          className="flex items-center justify-between group pl-2 border-l-2 border-slate-100 hover:border-primary transition-colors py-0.5 cursor-pointer hover:bg-slate-50 rounded-r-lg"
+                        >
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-xs font-bold text-on-surface group-hover:text-primary transition-colors leading-tight">
+                              {(order as any).point_name || order.pointName || 'Desconhecido'}
+                            </span>
+                            <span className="text-[9px] text-on-surface-variant font-medium">
+                              {order.vehicle || 'Sem veículo'}
+                              {!['IN PROGRESS','IN_PROGRESS','IN_TRANSIT','ACCEPTED'].includes(order.status) && (
+                                <>
+                                  {' · '}
+                                  {new Date((order as any).created_at || order.timestamp).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: 'America/Recife' })}
+                                </>
+                              )}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <FileText className="w-3 h-3 text-primary opacity-0 group-hover:opacity-100 transition-opacity" />
+                            {driver === 'Sem Motorista' && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  deleteOrder(order.id);
+                                }}
+                                disabled={deletingIds.has(order.id)}
+                                className="p-1 hover:bg-red-100 rounded-full transition-colors shrink-0 ml-1 disabled:opacity-40"
+                                title="Excluir permanentemente"
+                              >
+                                <X className="w-3 h-3 text-red-400 hover:text-red-600" />
+                              </button>
                             )}
-                          </span>
+                            <span className={cn(
+                              "text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-tighter shrink-0 ml-2",
+                              ['IN PROGRESS','IN_PROGRESS','IN_TRANSIT','ACCEPTED'].includes(order.status) ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-500"
+                            )}>
+                              {['IN PROGRESS','IN_PROGRESS','IN_TRANSIT','ACCEPTED'].includes(order.status) ? 'Em Rota' : 'Aguardando'}
+                            </span>
+                          </div>
                         </div>
-                        {driver === 'Sem Motorista' && (
-                          <button
-                            onClick={() => deleteOrder(order.id)}
-                            disabled={deletingIds.has(order.id)}
-                            className="p-1 hover:bg-red-100 rounded-full transition-colors shrink-0 ml-1 disabled:opacity-40"
-                            title="Excluir permanentemente"
-                          >
-                            <X className="w-3 h-3 text-red-400 hover:text-red-600" />
-                          </button>
-                        )}
-                        <span className={cn(
-                          "text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-tighter shrink-0 ml-2",
-                          ['IN PROGRESS','IN_PROGRESS','IN_TRANSIT','ACCEPTED'].includes(order.status) ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-500"
-                        )}>
-                          {['IN PROGRESS','IN_PROGRESS','IN_TRANSIT','ACCEPTED'].includes(order.status) ? 'Em Rota' : 'Aguardando'}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
                 </div>
               ))
             ) : (

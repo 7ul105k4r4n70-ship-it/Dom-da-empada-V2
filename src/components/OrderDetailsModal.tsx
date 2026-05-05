@@ -159,20 +159,24 @@ export function OrderDetailsModal({ order, onClose }: OrderDetailsModalProps) {
           groupedProducts[cat].push({
             name: p.name,
             quantity: orderItemsMap[p.name] || 0,
-            sort_order: p.sort_order || 999
+            sort_order: p.sort_order !== null && p.sort_order !== undefined ? p.sort_order : 999
           });
         } else {
           groupedProducts['Outros'].push({
             name: p.name,
             quantity: orderItemsMap[p.name] || 0,
-            sort_order: p.sort_order || 999
+            sort_order: p.sort_order !== null && p.sort_order !== undefined ? p.sort_order : 999
           });
         }
       });
 
       // Ordenar cada seção pelo sort_order do banco
       Object.keys(groupedProducts).forEach(cat => {
-        groupedProducts[cat].sort((a, b) => (a.sort_order || 999) - (b.sort_order || 999));
+        groupedProducts[cat].sort((a, b) => {
+          const sortA = a.sort_order !== null && a.sort_order !== undefined ? a.sort_order : 999;
+          const sortB = b.sort_order !== null && b.sort_order !== undefined ? b.sort_order : 999;
+          return sortA - sortB;
+        });
       });
 
 
@@ -201,7 +205,7 @@ export function OrderDetailsModal({ order, onClose }: OrderDetailsModalProps) {
       y += 8;
 
       // 4. Seções de Produtos
-      const renderSection = (title: string, products: any[], unitName: string, splitAt?: number) => {
+      const renderSection = (title: string, products: any[], unitName: string) => {
         if (products.length === 0) return 0;
         if (y > pageHeight - 40) { doc.addPage(); y = 20; }
 
@@ -219,40 +223,27 @@ export function OrderDetailsModal({ order, onClose }: OrderDetailsModalProps) {
         let sectionTotal = 0;
         const itemHeight = 5;
 
-        if (splitAt) {
-          // Layout com split fixo: col1 = primeiros splitAt, col2 = resto
-          const col1Items = products.slice(0, splitAt);
-          const col2Items = products.slice(splitAt, splitAt * 2);
-          const startY = y;
+        // Distribuição exata em duas colunas mantendo a leitura vertical (como era originalmente)
+        // Ex: Primeira metade na Esquerda, Segunda metade na Direita.
+        const mid = Math.ceil(products.length / 2);
 
-          col1Items.forEach(p => {
-            doc.text(`${p.name}: ${p.quantity} ${unitName}`, marginLeft, y);
-            sectionTotal += p.quantity;
-            y += itemHeight;
-          });
-
-          y = startY;
-          col2Items.forEach(p => {
-            doc.text(`${p.name}: ${p.quantity} ${unitName}`, marginLeft + colWidth, y);
-            sectionTotal += p.quantity;
-            y += itemHeight;
-          });
-
-          y = Math.max(startY + col1Items.length * itemHeight, startY + col2Items.length * itemHeight);
-        } else {
-          // Layout em pares
-          for (let i = 0; i < products.length; i += 2) {
-            if (y > pageHeight - 20) { doc.addPage(); y = 20; }
-            const p1 = products[i];
-            const p2 = products[i + 1];
+        for (let i = 0; i < mid; i++) {
+          if (y > pageHeight - 20) { doc.addPage(); y = 20; }
+          
+          const p1 = products[i];
+          const p2 = products[i + mid];
+          
+          if (p1) {
             doc.text(`${p1.name}: ${p1.quantity} ${unitName}`, marginLeft, y);
             sectionTotal += p1.quantity;
-            if (p2) {
-              doc.text(`${p2.name}: ${p2.quantity} ${unitName}`, marginLeft + colWidth, y);
-              sectionTotal += p2.quantity;
-            }
-            y += itemHeight;
           }
+          
+          if (p2) {
+            doc.text(`${p2.name}: ${p2.quantity} ${unitName}`, marginLeft + colWidth, y);
+            sectionTotal += p2.quantity;
+          }
+          
+          y += itemHeight;
         }
 
         y += 2;
@@ -269,7 +260,7 @@ export function OrderDetailsModal({ order, onClose }: OrderDetailsModalProps) {
       };
 
       let totalEmpadas = 0;
-      totalEmpadas += renderSection('EMPADA SALGADA', groupedProducts['Empada Salgada'], 'Caixas', 7);
+      totalEmpadas += renderSection('EMPADA SALGADA', groupedProducts['Empada Salgada'], 'Caixas');
       totalEmpadas += renderSection('EMPADAS DOCES', groupedProducts['Empadas Doces'], 'Caixas');
 
       // Total de empadas
@@ -290,7 +281,11 @@ export function OrderDetailsModal({ order, onClose }: OrderDetailsModalProps) {
         ...groupedProducts['Descartáveis'],
         ...groupedProducts['Fardamento'],
         ...(groupedProducts['Outros'] || [])
-      ].sort((a, b) => (a.sort_order || 999) - (b.sort_order || 999));
+      ].sort((a, b) => {
+        const sortA = a.sort_order !== null && a.sort_order !== undefined ? a.sort_order : 999;
+        const sortB = b.sort_order !== null && b.sort_order !== undefined ? b.sort_order : 999;
+        return sortA - sortB;
+      });
 
       renderSection('EMBALAGENS / OUTROS', otherItems, 'Unidades');
 

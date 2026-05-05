@@ -15,12 +15,14 @@ import {
   ChevronLeft,
   ChevronRight,
   Pencil,
-  Trash2
+  Trash2,
+  Download,
+  Eye
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/lib/utils';
 import { type Region, type Order } from '@/types';
-import { supabase } from '@/supabase';
+import { supabase, normalizeStorageUrl } from '@/supabase';
 import { OrderDetailsModal } from '@/components/OrderDetailsModal';
 
 interface ScheduleItem {
@@ -225,6 +227,30 @@ export function Schedule() {
     fetchTripOrders(trip);
   };
 
+  // Buscar pedido pelo nome do ponto e abrir modal PDF
+  const handleOpenPdfForPoint = async (pointName: string) => {
+    const normalized = pointName.toLowerCase().trim();
+    if (!normalized) return;
+    try {
+      // Buscar pedido mais recente com este ponto
+      const { data } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('region', region === 'Todas' ? 'Recife' : region) // Fallback region
+        .or(`pointName.ilike.%${pointName}%,point_name.ilike.%${pointName}%`)
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (data && data.length > 0) {
+        setSelectedOrder(data[0] as Order);
+      } else {
+        alert('Nenhum pedido recente encontrado para este ponto.');
+      }
+    } catch (e) {
+      console.error('[Schedule] Erro ao buscar pedido do ponto:', e);
+    }
+  };
+
   const handleDeleteSchedule = async (id: string) => {
     if (!confirm('Deseja realmente excluir este agendamento?')) return;
     // Remove imediatamente do estado local
@@ -313,7 +339,7 @@ export function Schedule() {
               key={item.id} 
               onClick={() => handleSelectTrip(item)}
               className={cn(
-                "p-2 border-l-4 rounded-lg space-y-1 cursor-pointer transition-all hover:scale-105 hover:shadow-md",
+                "p-2 border-l-4 rounded-lg space-y-1 cursor-pointer transition-all hover:scale-105 hover:shadow-md relative group/card",
                 item.status === 'Conflito' ? "bg-red-100 border-red-600 animate-pulse" : 
                 item.color === 'primary' ? "bg-primary/10 border-primary" :
                 item.color === 'secondary' ? "bg-secondary/10 border-secondary" :
@@ -330,14 +356,18 @@ export function Schedule() {
                 )}>{item.type}</p>
                 {item.status === 'Conflito' && <AlertTriangle className="w-3 h-3 text-red-600" />}
               </div>
-              <p className={cn(
-                "text-[11px] font-medium leading-tight truncate",
-                item.status === 'Conflito' ? "text-red-900" : "text-on-surface"
-              )} title={item.location}>
-                {item.points && item.points.length > 1
-                  ? `${item.points.length} paradas`
-                  : item.location}
-              </p>
+              <div className="flex justify-between items-start gap-1">
+                <div className="min-w-0 flex-1">
+                  <p className={cn(
+                    "text-[11px] font-medium leading-tight truncate",
+                    item.status === 'Conflito' ? "text-red-900" : "text-on-surface"
+                  )} title={item.location}>
+                    {item.points && item.points.length > 1
+                      ? `${item.points.length} paradas`
+                      : item.location}
+                  </p>
+                </div>
+              </div>
               <p className={cn(
                 "text-[9px]",
                 item.status === 'Conflito' ? "text-red-900/70" : "text-on-surface-variant"
@@ -593,38 +623,41 @@ export function Schedule() {
                 {/* Pontos/Paradas da rota */}
                 {selectedTrip.points && selectedTrip.points.length > 0 && (
                   <div className="bg-white rounded-lg border border-slate-100 p-2 space-y-1.5">
-                    {selectedTrip.points.map((point, idx) => (
-                      <div key={point.id} className="flex items-center gap-2 text-xs">
-                        <span className="w-5 h-5 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[10px] font-bold">
-                          {idx + 1}
-                        </span>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-bold text-on-surface truncate">{point.name}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                    {selectedTrip.points.map((point, idx) => {
+                      // Tentar encontrar o pedido para este ponto
+                      const pointOrder = tripOrders.find((o: any) => {
+                        const orderPoint = (o.pointName || o.point_name || '').toLowerCase().trim();
+                        const ptName = (point.name || '').toLowerCase().trim();
+                        return orderPoint && ptName && orderPoint === ptName;
+                      });
 
-                {loadingOrders ? (
-                  <div className="flex items-center justify-center py-2">
-                    <div className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+                      return (
+                        <div key={point.id} className="flex flex-col gap-2 text-xs">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="w-5 h-5 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[10px] font-bold shrink-0">
+                              {idx + 1}
+                            </span>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-bold text-on-surface truncate">{point.name}</p>
+                            </div>
+                          </div>
+                          
+                          {/* Botão PDF para o ponto - SÓ APARECE SE TIVER PEDIDO VINCULADO */}
+                          {pointOrder && (
+                            <button
+                              onClick={() => setSelectedOrder(pointOrder)}
+                              className="w-full py-1.5 px-3 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg flex items-center justify-center gap-2 transition-colors shadow-sm group/btn"
+                            >
+                              <FileText className="w-3.5 h-3.5 text-[#7B2D3B] group-hover/btn:scale-110 transition-transform" />
+                              <span className="text-[10px] font-bold text-slate-700">
+                                Ver Pedido #{(pointOrder as any).short_id || (pointOrder as any).id?.replace(/\D/g, '').substring(0,3) || '...'}
+                              </span>
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
-                ) : tripOrders.length > 0 ? (
-                  <div className="space-y-2">
-                    {tripOrders.map((order) => (
-                      <button
-                        key={order.id}
-                        onClick={() => setSelectedOrder(order)}
-                        className="w-full py-2 bg-white border border-slate-200 text-xs font-bold text-on-surface rounded-lg hover:bg-slate-50 transition-all flex items-center justify-center gap-2"
-                      >
-                        <FileText className="w-3 h-3 text-primary" />
-                        Ver Pedido #{order.short_id || order.id.split('-')[0]}
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-[10px] text-on-surface-variant text-center py-2">Nenhum pedido vinculado</p>
                 )}
               </motion.div>
             )}
