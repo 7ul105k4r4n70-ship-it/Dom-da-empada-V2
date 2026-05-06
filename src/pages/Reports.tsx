@@ -1605,11 +1605,11 @@ export function Reports() {
                 <div className="col-span-2 text-center">
                   <span className={cn('px-2 py-1 rounded-full text-[9px] font-black uppercase',
                     order.status === 'COMPLETED' ? 'bg-green-100 text-green-700' :
-                    (order.status === 'IN PROGRESS' || order.status === 'IN_PROGRESS') ? 'bg-amber-100 text-amber-700' :
+                    (order.status === 'EM ANDAMENTO' || order.status === 'EM_ANDAMENTO') ? 'bg-amber-100 text-amber-700' :
                     order.status === 'CANCELLED' ? 'bg-red-100 text-red-700' :
                     'bg-blue-100 text-blue-700')}>
-                    {order.status === 'IN_PROGRESS' ? 'Em Andamento' : 
-                     order.status === 'IN PROGRESS' ? 'Em Andamento' :
+                    {order.status === 'EM_ANDAMENTO' ? 'Em Andamento' : 
+                     order.status === 'EM ANDAMENTO' ? 'Em Andamento' :
                      order.status === 'COMPLETED' ? 'Entregue' :
                      order.status}
                   </span>

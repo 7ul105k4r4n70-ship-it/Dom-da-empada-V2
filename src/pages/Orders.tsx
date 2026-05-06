@@ -362,7 +362,7 @@ export function Orders() {
                     <span className={cn(
                       "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-tight",
                       ['COMPLETED', 'DELIVERED', 'Entregue'].includes(order.status) ? "bg-green-100 text-green-700" : 
-                      ['IN_PROGRESS', 'IN PROGRESS', 'ACCEPTED'].includes(order.status) ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"
+                      ['EM ANDAMENTO', 'EM_ANDAMENTO', 'ACEITO'].includes(order.status) ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"
                     )}>
                       {order.status}
                     </span>

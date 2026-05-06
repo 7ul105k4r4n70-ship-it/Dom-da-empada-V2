@@ -265,7 +265,7 @@ export function Dashboard() {
   const totalUnits = orders.reduce((acc, curr) => acc + (curr.units || 0), 0);
   const completedOrders = orders.filter(o => ['COMPLETED', 'DELIVERED', 'Entregue'].includes(o.status)).length;
   const pendingOrders = orders.filter(o => !['COMPLETED', 'DELIVERED', 'Entregue'].includes(o.status)).length;
-  const urgentOrders = orders.filter(o => o.status === 'IDLE' || o.status === 'AWAITING LOGISTICS').length;
+  const urgentOrders = orders.filter(o => o.status === 'AGUARDANDO' || o.status === 'AGUARDANDO LOGÍSTICA').length;
 
   return (
     <div className="space-y-8">
@@ -330,7 +330,7 @@ export function Dashboard() {
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-xs text-on-surface-variant">Pendentes</span>
-                <span className="text-lg font-black text-amber-500">{orders.filter(o => ['IN_PROGRESS', 'IN PROGRESS', 'ACCEPTED'].includes(o.status)).length}</span>
+                <span className="text-lg font-black text-amber-500">{orders.filter(o => ['EM ANDAMENTO', 'EM_ANDAMENTO', 'ACEITO'].includes(o.status)).length}</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-xs text-on-surface-variant">Sem Motorista</span>
@@ -557,7 +557,7 @@ export function Dashboard() {
                             </span>
                             <span className="text-[9px] text-on-surface-variant font-medium">
                               {order.vehicle || 'Sem veículo'}
-                              {!['IN PROGRESS','IN_PROGRESS','IN_TRANSIT','ACCEPTED'].includes(order.status) && (
+                              {!['EM ANDAMENTO','EM_ANDAMENTO','EM_TRÂNSITO','ACEITO'].includes(order.status) && (
                                 <>
                                   {' · '}
                                   {new Date((order as any).created_at || order.timestamp).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: 'America/Recife' })}
@@ -582,9 +582,9 @@ export function Dashboard() {
                             )}
                             <span className={cn(
                               "text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-tighter shrink-0 ml-2",
-                              ['IN PROGRESS','IN_PROGRESS','IN_TRANSIT','ACCEPTED'].includes(order.status) ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-500"
+                              ['EM ANDAMENTO','EM_ANDAMENTO','EM_TRÂNSITO','ACEITO'].includes(order.status) ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-500"
                             )}>
-                              {['IN PROGRESS','IN_PROGRESS','IN_TRANSIT','ACCEPTED'].includes(order.status) ? 'Em Rota' : 'Aguardando'}
+                              {['EM ANDAMENTO','EM_ANDAMENTO','EM_TRÂNSITO','ACEITO'].includes(order.status) ? 'Em Rota' : 'Aguardando'}
                             </span>
                           </div>
                         </div>

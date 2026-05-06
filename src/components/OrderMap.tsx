@@ -135,7 +135,7 @@ export function OrderMap({ orders = [], drivers = [], region = 'Recife', center:
           <Marker
             key={`order-${order.id}`}
             position={{ lat: order.lat!, lng: order.lng! }}
-            icon={order.status === 'COMPLETED' ? ICON_DONE : order.status === 'IN PROGRESS' ? ICON_TRANSIT : ICON_ORDER}
+            icon={order.status === 'COMPLETED' ? ICON_DONE : order.status === 'EM ANDAMENTO' ? ICON_TRANSIT : ICON_ORDER}
             title={`Pedido #${order.short_id || order.id}`}
             onClick={() => { setSelectedOrder(order); setSelectedDriver(null); }}
           />
@@ -174,8 +174,8 @@ export function OrderMap({ orders = [], drivers = [], region = 'Recife', center:
               </div>
               <div style={{ marginTop: 6, padding: '2px 6px', borderRadius: 4, fontSize: 9, fontWeight: 900,
                 textAlign: 'center', textTransform: 'uppercase',
-                background: selectedOrder.status === 'COMPLETED' ? '#dcfce7' : selectedOrder.status === 'IN PROGRESS' ? '#fef9c3' : '#dbeafe',
-                color: selectedOrder.status === 'COMPLETED' ? '#15803d' : selectedOrder.status === 'IN PROGRESS' ? '#a16207' : '#1d4ed8'
+                background: selectedOrder.status === 'COMPLETED' ? '#dcfce7' : selectedOrder.status === 'EM ANDAMENTO' ? '#fef9c3' : '#dbeafe',
+                color: selectedOrder.status === 'COMPLETED' ? '#15803d' : selectedOrder.status === 'EM ANDAMENTO' ? '#a16207' : '#1d4ed8'
               }}>
                 {selectedOrder.status}
               </div>
