@@ -82,8 +82,8 @@ export function Orders() {
     };
     
     fetchDriverLocations();
-    // Atualizar localização a cada 30 segundos
-    const locationInterval = setInterval(fetchDriverLocations, 30000);
+    // Atualizar localização a cada 10 segundos
+    const locationInterval = setInterval(fetchDriverLocations, 10000);
 
     // Escutar novas inserções em gps_tracking
     const gpsChannel = supabase
