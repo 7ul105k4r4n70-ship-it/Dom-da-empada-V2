@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, 
@@ -45,34 +45,9 @@ export function Sidebar({
   onClose?: () => void;
 }) {
   const navigate = useNavigate();
-  const [logoUrl, setLogoUrl] = useState('/logo.png');
+  const logoUrl = '/logo.png';
 
   // Admin auth passado como prop — sem chamada de rede
-
-  useEffect(() => {
-    // Em dev, nao processar canvas para nao bloquear a UI
-    if (!import.meta.env.PROD && window.location.hostname === 'localhost') {
-      return;
-    }
-    
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      ctx.drawImage(img, 0, 0);
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const d = imageData.data;
-      for (let i = 0; i < d.length; i += 4) {
-        if (d[i] > 235 && d[i + 1] > 235 && d[i + 2] > 235) d[i + 3] = 0;
-      }
-      ctx.putImageData(imageData, 0, 0);
-      setLogoUrl(canvas.toDataURL('image/png'));
-    };
-    img.src = '/logo.png';
-  }, []);
 
   const handleLogout = async () => {
     try {

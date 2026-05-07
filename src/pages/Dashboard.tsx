@@ -37,14 +37,29 @@ export function Dashboard() {
   }, []);
 
   useEffect(() => {
-    supabase.from('app_users').select('id, name').in('role', ['motorista', 'driver']).then(({ data }) => {
+    // CRÍTICO: Buscar apenas motoristas da região selecionada
+    const fetchDrivers = async () => {
+      let query = supabase
+        .from('app_users')
+        .select('id, name, region')
+        .in('role', ['motorista', 'driver']);
+      
+      // Filtrar por região (NUNCA misturar dados de regiões diferentes)
+      if (region !== 'Todas') {
+        query = query.eq('region', region);
+      }
+      
+      const { data } = await query;
       if (data) {
         const map: Record<string, string> = {};
         data.forEach((u: any) => { map[u.id] = u.name; });
         setDriverNames(map);
       }
-    });
-  }, []);
+    };
+    
+    fetchDrivers();
+  }, [region]); // Recarregar quando região mudar
+
 
   // driverDaySchedules calculado via useMemo (reativo a todaySchedules e orders)
 
@@ -96,10 +111,19 @@ export function Dashboard() {
     const fetchSchedules = async () => {
       try {
         const todayStr = new Date().toISOString().split('T')[0];
-        const { data, error } = await supabase
+        
+        // CRÍTICO: Filtrar agendamentos por região selecionada
+        let query = supabase
           .from('schedules')
           .select('*')
-          .gte('scheduled_date', todayStr)
+          .gte('scheduled_date', todayStr);
+        
+        // Aplicar filtro de região (NUNCA mostrar dados de outra região)
+        if (region !== 'Todas') {
+          query = query.eq('region', region);
+        }
+        
+        const { data, error } = await query
           .order('scheduled_date', { ascending: true })
           .order('scheduled_time', { ascending: true });
 
@@ -261,10 +285,50 @@ export function Dashboard() {
   // Pedidos do dia atual (considerando created_at ou delivered_at)
   const todayOrders = orders.filter(o => isToday(o.created_at) || isToday(o.delivered_at));
 
-  // Agregados reais
+  // Helper: normaliza status para comparação (case-insensitive)
+  const normalizeStatus = (status: string) => (status || '').toLowerCase().trim();
+  
+  // Status considerados como "concluído/entregue"
+  const isCompleted = (status: string) => {
+    const normalized = normalizeStatus(status);
+    return ['completed', 'delivered', 'entregue'].some(s => normalized.includes(s));
+  };
+  
+  // Status considerados como "em andamento/pendente"
+  const isPending = (status: string) => {
+    const normalized = normalizeStatus(status);
+    return ['in progress', 'in_progress', 'em andamento', 'aceito', 'accepted'].some(s => normalized.includes(s));
+  };
+  
+  // Status considerados como "cancelado/inválido"
+  const isCancelled = (status: string) => {
+    const normalized = normalizeStatus(status);
+    return ['cancelled', 'cancelado', 'deleted', 'excluido'].some(s => normalized.includes(s));
+  };
+
+  // Agregados reais - TRABALHO DO DIA
   const totalUnits = orders.reduce((acc, curr) => acc + (curr.units || 0), 0);
-  const completedOrders = orders.filter(o => ['COMPLETED', 'DELIVERED', 'Entregue'].includes(o.status)).length;
-  const pendingOrders = orders.filter(o => !['COMPLETED', 'DELIVERED', 'Entregue'].includes(o.status)).length;
+  
+  // Entregas DO DIA - baseado em QUANDO foram entregues (delivered_at), não quando foram criadas
+  // Feitas: pedidos entregues HOJE (delivered_at é hoje)
+  const completedToday = orders.filter(o => {
+    if (!o.delivered_at) return false;
+    return isToday(o.delivered_at);
+  }).length;
+  
+  // Pendentes: pedidos que motoristas selecionaram mas ainda não entregaram
+  const pendingToday = orders.filter(o => {
+    const hasDriver = !!(o.driver_name || (o as any).driverName || (o as any).driver_id);
+    const notDelivered = !o.delivered_at || !isToday(o.delivered_at);
+    return hasDriver && isPending(o.status) && notDelivered;
+  }).length;
+  
+  // Sem Motorista: pedidos ativos sem motorista atribuído (aparecem no card "SEM MOTORISTA")
+  const withoutDriverToday = orders.filter(o => {
+    const hasDriver = !!(o.driver_name || (o as any).driverName || (o as any).driver_id);
+    return !hasDriver && !isCompleted(o.status) && !isCancelled(o.status);
+  }).length;
+  
   const urgentOrders = orders.filter(o => o.status === 'AGUARDANDO' || o.status === 'AGUARDANDO LOGÍSTICA').length;
 
   return (
@@ -326,15 +390,15 @@ export function Dashboard() {
             <div className="space-y-3">
               <div className="flex justify-between items-center">
                 <span className="text-xs text-on-surface-variant">Feitas</span>
-                <span className="text-lg font-black text-secondary">{todayOrders.filter(o => ['COMPLETED', 'DELIVERED', 'Entregue'].includes(o.status)).length}</span>
+                <span className="text-lg font-black text-secondary">{completedToday}</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-xs text-on-surface-variant">Pendentes</span>
-                <span className="text-lg font-black text-amber-500">{orders.filter(o => ['EM ANDAMENTO', 'EM_ANDAMENTO', 'ACEITO'].includes(o.status)).length}</span>
+                <span className="text-lg font-black text-amber-500">{pendingToday}</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-xs text-on-surface-variant">Sem Motorista</span>
-                <span className="text-lg font-black text-red-500">{orders.filter(o => !['COMPLETED', 'DELIVERED', 'Entregue', 'CANCELLED', 'Cancelado'].includes(o.status) && !(o.driver_name || (o as any).driverName || (o as any).driver_id)).length}</span>
+                <span className="text-lg font-black text-red-500">{withoutDriverToday}</span>
               </div>
             </div>
           </div>
@@ -479,22 +543,7 @@ export function Dashboard() {
                 </div>
               );
             })
-          ) : (
-            <div className="bg-white rounded-2xl shadow-md border border-slate-200 flex flex-col overflow-hidden min-h-[180px]">
-              <div className="bg-[#7B2D3B] p-3">
-                <div className="flex items-center gap-2">
-                  <div className="w-7 h-7 bg-white/20 rounded-lg flex items-center justify-center shrink-0">
-                    <Calendar className="w-3.5 h-3.5 text-white" />
-                  </div>
-                  <p className="text-xs font-black text-white">Viagens Agendadas</p>
-                </div>
-              </div>
-              <div className="flex-1 flex flex-col items-center justify-center p-5">
-                <AlertTriangle className="w-6 h-6 text-[#7B2D3B]/30 mb-2" />
-                <p className="text-xs text-slate-400 font-medium">Nenhuma viagem agendada.</p>
-              </div>
-            </div>
-          )}
+          ) : null}
         </div>
 
         <div className="space-y-6 w-full lg:col-span-3">
